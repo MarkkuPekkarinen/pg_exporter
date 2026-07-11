@@ -13,6 +13,34 @@ import (
 	"github.com/prometheus/exporter-toolkit/web"
 )
 
+// clearLibPQEnvironment removes ambient PostgreSQL settings that pg_exporter
+// must not pass to lib/pq. In particular, lib/pq supports PGSERVICE and
+// PGSERVICEFILE, but service-file values can override the explicit connection
+// URL selected by pg_exporter. Ignoring them keeps the advertised URL and the
+// actual connection target deterministic.
+func clearLibPQEnvironment() {
+	variables := []struct {
+		name   string
+		reason string
+	}{
+		{"PGSYSCONFDIR", "kept isolated for compatibility with older lib/pq"},
+		{"PGLOCALEDIR", "kept isolated for compatibility with older lib/pq"},
+		{"PGREALM", "rejected by lib/pq"},
+		{"PGSERVICEFILE", "may override the explicit pg_exporter URL"},
+		{"PGSERVICE", "may override the explicit pg_exporter URL"},
+	}
+
+	for _, variable := range variables {
+		if _, exists := os.LookupEnv(variable.name); !exists {
+			continue
+		}
+		logWarnf("clearing environment variable %s (%s)", variable.name, variable.reason)
+		if err := os.Unsetenv(variable.name); err != nil {
+			logWarnf("failed to clear environment variable %s: %v", variable.name, err)
+		}
+	}
+}
+
 // DryRun will explain all query fetched from configs
 func DryRun() {
 	configs, err := LoadConfig(*configPath)
@@ -90,24 +118,7 @@ func Reload() error {
 func Run() {
 	ParseArgs()
 
-	// Clean up unsupported libpq environment variables that would cause panic
-	// lib/pq driver does not support these PostgreSQL environment variables
-	// and will panic if they are set. We clear them to ensure stable operation.
-	// See: https://github.com/lib/pq/blob/master/conn.go#L2019
-	unsupportedEnvs := []string{
-		"PGSYSCONFDIR",  // PostgreSQL system configuration directory
-		"PGSERVICEFILE", // PostgreSQL connection service file
-		"PGSERVICE",     // PostgreSQL service name
-		"PGLOCALEDIR",   // PostgreSQL locale directory
-		"PGREALM",       // Kerberos realm
-	}
-
-	for _, env := range unsupportedEnvs {
-		if val := os.Getenv(env); val != "" {
-			logWarnf("clearing unsupported environment variable %s=%s (lib/pq limitation)", env, val)
-			os.Unsetenv(env)
-		}
-	}
+	clearLibPQEnvironment()
 
 	// explain config only
 	if *dryRun {
