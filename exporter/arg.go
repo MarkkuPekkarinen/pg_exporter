@@ -11,7 +11,7 @@ import (
 
 var (
 	// exporter settings
-	pgURL             = kingpin.Flag("url", "postgres target url").Short('d').Short('u').String()
+	pgURL             = kingpin.Flag("url", "postgres target url").Short('u').String()
 	configPath        = kingpin.Flag("config", "path to config dir or file").Short('c').String()
 	webConfig         = kingpinflag.AddFlags(kingpin.CommandLine, ":9630")
 	constLabels       = kingpin.Flag("label", "constant labels: comma separated list of label=value pair").Short('l').Default("").Envar("PG_EXPORTER_LABEL").String()
@@ -26,7 +26,6 @@ var (
 	connectTimeout    = kingpin.Flag("connect-timeout", "connect timeout in ms, 100 by default").Short('T').Envar("PG_EXPORTER_CONNECT_TIMEOUT").Default("100").Int()
 
 	// prometheus http
-	// listenAddress = kingpin.Flag("web.listen-address", "prometheus web server listen address").Short('L').Default(":9630").Envar("PG_EXPORTER_LISTEN_ADDRESS").String()
 	metricPath = kingpin.Flag("web.telemetry-path", "URL path under which to expose metrics.").Short('P').Default("/metrics").Envar("PG_EXPORTER_TELEMETRY_PATH").String()
 
 	// action

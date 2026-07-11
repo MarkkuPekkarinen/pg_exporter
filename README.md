@@ -206,6 +206,16 @@ We also have pre-packaged RPM / DEB packages in the [Pigsty Infra Repo](https://
 
 You can find pre-built amd64/arm64 docker images here: [pgsty/pg_exporter](https://hub.docker.com/r/pgsty/pg_exporter)
 
+Build a local development image from the canonical [`Dockerfile`](Dockerfile):
+
+```bash
+make docker
+# Override the image repository when needed:
+make docker DOCKER_REPO=example/pg_exporter
+```
+
+Multi-architecture release images are built by [GoReleaser](.goreleaser.yml) together with the other release artifacts.
+
 
 --------
 

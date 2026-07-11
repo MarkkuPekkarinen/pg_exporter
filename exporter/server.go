@@ -538,11 +538,6 @@ func (s *Server) Stat() string {
 	s.lock.RLock()
 	defer s.lock.RUnlock()
 	buf := new(bytes.Buffer)
-	//err := statsTemplate.Execute(buf, s)
-	//if err != nil {
-	//	logErrorf("fail to generate server stats html")
-	//	return fmt.Sprintf("fail to generate server stat html, %s", err.Error())
-	//}
 	buf.WriteString(fmt.Sprintf("%-24s %-10s %-10s %-10s %-10s %-10s %-6s %-10s\n", "name", "total", "hit", "error", "skip", "metric", "ttl/s", "duration/ms"))
 	for _, query := range s.Collectors {
 		buf.WriteString(fmt.Sprintf("%-24s %-10d %-10d %-10d %-10d %-10d %-6d %-10f\n",

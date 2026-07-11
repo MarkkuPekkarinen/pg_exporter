@@ -1,6 +1,8 @@
 *
+!Dockerfile
 !go.mod
 !go.sum
 !main.go
-!exporter
+!exporter/
+!exporter/**
 !pg_exporter.yml

@@ -5,6 +5,7 @@
 # Copyright :   2018-2026  Ruohang Feng / Vonng (rh@vonng.com)
 #==============================================================#
 VERSION      ?= v1.3.0
+DOCKER_REPO  ?= pgsty/pg_exporter
 BUILD_DATE   := $(shell date '+%Y%m%d%H%M%S')
 GIT_BRANCH   := $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
 GIT_REVISION := $(shell git rev-parse --short HEAD 2>/dev/null  || echo "HEAD")
@@ -19,7 +20,6 @@ LINUX_AMD_DIR:=dist/$(VERSION)/pg_exporter-$(VERSION).linux-amd64
 LINUX_ARM_DIR:=dist/$(VERSION)/pg_exporter-$(VERSION).linux-arm64
 DARWIN_AMD_DIR:=dist/$(VERSION)/pg_exporter-$(VERSION).darwin-amd64
 DARWIN_ARM_DIR:=dist/$(VERSION)/pg_exporter-$(VERSION).darwin-arm64
-WINDOWS_DIR:=dist/$(VERSION)/pg_exporter-$(VERSION).windows-amd64
 
 
 ###############################################################
@@ -148,12 +148,13 @@ goreleaser-check: goreleaser-install
 release-new: goreleaser-release
 
 
-# build docker image
+# Build a local image from the canonical Dockerfile.
+# Multi-architecture release images are built by GoReleaser.
 docker: docker-build
 docker-build:
-	./docker/build.sh
-docker-release:
-	./docker/release.sh
+	docker build -f Dockerfile \
+		-t $(DOCKER_REPO):$(VERSION)-dev \
+		-t $(DOCKER_REPO):dev .
 
 ###############################################################
 #                         Develop                             #
@@ -182,8 +183,9 @@ d: dev
 dev:
 	hugo serve
 
-.PHONY: build clean build-darwin build-linux\
- release release-darwin release-linux release-windows docker docker-build docker-release \
+.PHONY: build clean build-darwin-amd64 build-darwin-arm64 build-linux-amd64 build-linux-arm64 \
+ r release release-darwin release-linux linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 \
+ docker docker-build \
  install uninstall debug curl upload \
  goreleaser-install goreleaser-snapshot goreleaser-build goreleaser-release goreleaser-test-release \
  goreleaser-check release-new goreleaser-local

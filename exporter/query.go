@@ -117,7 +117,6 @@ var htmlTemplate, _ = htmltmpl.New("Query").Parse(`
 
 // MarshalYAML will turn query into YAML format
 func (q *Query) MarshalYAML() string {
-	// buf := new(bytes.Buffer)
 	v := make(map[string]Query, 1)
 	v[q.Branch] = *q
 	buf, err := yaml.Marshal(v)
