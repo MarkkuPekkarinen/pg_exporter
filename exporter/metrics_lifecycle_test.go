@@ -1,11 +1,26 @@
 package exporter
 
 import (
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 )
+
+func readGauge(t *testing.T, gauge prometheus.Gauge) float64 {
+	t.Helper()
+	registry := prometheus.NewRegistry()
+	registry.MustRegister(gauge)
+	families, err := registry.Gather()
+	if err != nil {
+		t.Fatalf("gather gauge metric: %v", err)
+	}
+	if len(families) != 1 || len(families[0].GetMetric()) != 1 || families[0].GetMetric()[0].GetGauge() == nil {
+		t.Fatalf("gathered metric is not a single gauge: %v", families)
+	}
+	return families[0].GetMetric()[0].GetGauge().GetValue()
+}
 
 func makeCachedCollectorForServer(s *Server, name string, val float64) *Collector {
 	q := makeGaugeQuery(name, 1)
@@ -56,6 +71,51 @@ func TestExporterCollectAndInternalMetrics(t *testing.T) {
 	}
 	if e.Status() != "primary" {
 		t.Fatalf("Exporter status = %s, want primary", e.Status())
+	}
+}
+
+func TestExporterRecoveryMetricRetainsLastKnownRoleWhenTargetGoesDown(t *testing.T) {
+	primary := NewServer("postgresql://u:p@localhost:5432/postgres")
+	scrape := 0
+	primary.beforeScrape = func(s *Server) error {
+		scrape++
+		switch scrape {
+		case 1:
+			s.UP = true
+			s.Version = 160000
+			s.Recovery = true
+			return nil
+		case 2:
+			return errors.New("database unavailable")
+		default:
+			s.UP = true
+			s.Version = 160000
+			s.Recovery = false
+			return nil
+		}
+	}
+	primary.Planned = true
+	primary.ResetStats()
+
+	e := &Exporter{server: primary, servers: map[string]*Server{}}
+	e.setupInternalMetrics()
+
+	e.Collect(make(chan prometheus.Metric, 64))
+	if got := readGauge(t, e.recovery); got != 1 {
+		t.Fatalf("recovery metric after replica scrape = %v, want 1", got)
+	}
+
+	e.Collect(make(chan prometheus.Metric, 64))
+	if !primary.Recovery {
+		t.Fatal("test fixture should retain the server's last known recovery state")
+	}
+	if got := readGauge(t, e.recovery); got != 1 {
+		t.Fatalf("recovery metric after failed scrape = %v, want last known value 1", got)
+	}
+
+	e.Collect(make(chan prometheus.Metric, 64))
+	if got := readGauge(t, e.recovery); got != 0 {
+		t.Fatalf("recovery metric after reconnecting as primary = %v, want 0", got)
 	}
 }
 
