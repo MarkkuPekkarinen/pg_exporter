@@ -1,12 +1,55 @@
 package exporter
 
 import (
+	"context"
+	"database/sql"
+	"database/sql/driver"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 )
+
+type closeTrackingConnector struct {
+	closed *atomic.Bool
+}
+
+func (c closeTrackingConnector) Connect(context.Context) (driver.Conn, error) {
+	return &closeTrackingConn{closed: c.closed}, nil
+}
+
+func (c closeTrackingConnector) Driver() driver.Driver {
+	return closeTrackingDriver{}
+}
+
+type closeTrackingDriver struct{}
+
+func (closeTrackingDriver) Open(string) (driver.Conn, error) {
+	return nil, errors.New("close tracking driver must be opened through its connector")
+}
+
+type closeTrackingConn struct {
+	closed *atomic.Bool
+}
+
+func (c *closeTrackingConn) Prepare(string) (driver.Stmt, error) {
+	return nil, errors.New("prepare not supported")
+}
+
+func (c *closeTrackingConn) Close() error {
+	c.closed.Store(true)
+	return nil
+}
+
+func (c *closeTrackingConn) Begin() (driver.Tx, error) {
+	return nil, errors.New("transactions not supported")
+}
+
+func (c *closeTrackingConn) Ping(context.Context) error {
+	return nil
+}
 
 func readGauge(t *testing.T, gauge prometheus.Gauge) float64 {
 	t.Helper()
@@ -116,6 +159,71 @@ func TestExporterRecoveryMetricRetainsLastKnownRoleWhenTargetGoesDown(t *testing
 	e.Collect(make(chan prometheus.Metric, 64))
 	if got := readGauge(t, e.recovery); got != 0 {
 		t.Fatalf("recovery metric after reconnecting as primary = %v, want 0", got)
+	}
+}
+
+func TestNewExporterFailFastClosesPrimaryServer(t *testing.T) {
+	closed := &atomic.Bool{}
+	db := sql.OpenDB(closeTrackingConnector{closed: closed})
+	t.Cleanup(func() { _ = db.Close() })
+	if err := db.PingContext(context.Background()); err != nil {
+		t.Fatalf("open close-tracking database connection: %v", err)
+	}
+
+	checkErr := errors.New("connectivity check failed")
+	server := NewServer("postgresql://u:p@localhost:5432/postgres")
+	server.DB = db
+	server.beforeScrape = func(*Server) error { return checkErr }
+	serverFactory := func(string, ...ServerOpt) *Server { return server }
+
+	exporter, err := newExporterWithServerFactory(
+		"postgresql://u:p@localhost:5432/postgres",
+		serverFactory,
+		WithFailFast(true),
+	)
+	if exporter != nil {
+		t.Fatal("NewExporter should return a nil exporter when fail-fast check fails")
+	}
+	if !errors.Is(err, checkErr) {
+		t.Fatalf("NewExporter error = %v, want wrapped connectivity error", err)
+	}
+	if !closed.Load() {
+		t.Fatal("NewExporter did not close the primary server database after fail-fast check failure")
+	}
+}
+
+func TestNewExporterNonFailFastKeepsPrimaryServerOpen(t *testing.T) {
+	closed := &atomic.Bool{}
+	db := sql.OpenDB(closeTrackingConnector{closed: closed})
+	t.Cleanup(func() { _ = db.Close() })
+	if err := db.PingContext(context.Background()); err != nil {
+		t.Fatalf("open close-tracking database connection: %v", err)
+	}
+
+	checkErr := errors.New("connectivity check failed")
+	server := NewServer("postgresql://u:p@localhost:5432/postgres")
+	server.DB = db
+	server.beforeScrape = func(*Server) error { return checkErr }
+	serverFactory := func(string, ...ServerOpt) *Server { return server }
+
+	exporter, err := newExporterWithServerFactory(
+		"postgresql://u:p@localhost:5432/postgres",
+		serverFactory,
+		WithFailFast(false),
+	)
+	if err != nil {
+		t.Fatalf("NewExporter returned an error with fail-fast disabled: %v", err)
+	}
+	if exporter == nil {
+		t.Fatal("NewExporter returned a nil exporter with fail-fast disabled")
+	}
+	if closed.Load() {
+		t.Fatal("NewExporter closed the primary server database with fail-fast disabled")
+	}
+
+	exporter.Close()
+	if !closed.Load() {
+		t.Fatal("Exporter.Close did not close the primary server database")
 	}
 }
 
