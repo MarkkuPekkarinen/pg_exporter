@@ -3,15 +3,64 @@ package exporter
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/prometheus/exporter-toolkit/web"
 )
+
+// validateTelemetryPath checks that path can be registered alongside all of
+// pg_exporter's fixed endpoints. registerHTTPRoutes is deliberately reused so
+// validation cannot drift from the routes used by the real server.
+func validateTelemetryPath(path string) (err error) {
+	if path == "" {
+		return fmt.Errorf("web.telemetry-path must not be empty")
+	}
+	if path[0] != '/' {
+		return fmt.Errorf("web.telemetry-path %q must start with '/'", path)
+	}
+	uri, parseErr := url.ParseRequestURI(path)
+	if parseErr != nil || strings.ContainsAny(path, "?#") || uri.RawQuery != "" || uri.Fragment != "" {
+		return fmt.Errorf("web.telemetry-path %q must be a valid URL path without query or fragment", path)
+	}
+	if strings.ContainsAny(path, "{}") {
+		return fmt.Errorf("web.telemetry-path %q must be a literal URL path without ServeMux wildcards", path)
+	}
+
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("invalid or conflicting web.telemetry-path %q: %v", path, recovered)
+		}
+	}()
+	registerHTTPRoutes(http.NewServeMux(), &Exporter{}, path, http.NotFoundHandler())
+	return nil
+}
+
+func registerHTTPRoutes(mux *http.ServeMux, e *Exporter, telemetryPath string, telemetryHandler http.Handler) {
+	mux.HandleFunc("/", TitleFunc)
+	mux.HandleFunc("/version", VersionFunc)
+	mux.HandleFunc("/reload", ReloadFunc)
+	mux.HandleFunc("/stat", e.StatFunc)
+	mux.HandleFunc("/explain", e.ExplainFunc)
+
+	for _, path := range []string{"/up", "/read", "/health", "/liveness", "/readiness"} {
+		mux.HandleFunc(path, e.UpCheckFunc)
+	}
+	for _, path := range []string{"/primary", "/leader", "/master", "/read-write", "/rw"} {
+		mux.HandleFunc(path, e.PrimaryCheckFunc)
+	}
+	for _, path := range []string{"/replica", "/standby", "/slave", "/read-only", "/ro"} {
+		mux.HandleFunc(path, e.ReplicaCheckFunc)
+	}
+
+	mux.Handle(telemetryPath, telemetryHandler)
+}
 
 // clearLibPQEnvironment removes ambient PostgreSQL settings that pg_exporter
 // must not pass to lib/pq. In particular, lib/pq supports PGSERVICE and
@@ -135,6 +184,10 @@ func Run() {
 		os.Exit(1)
 	}
 	listenAddr := (*webConfig.WebListenAddresses)[0]
+	if err := validateTelemetryPath(*metricPath); err != nil {
+		logErrorf("%v", err)
+		os.Exit(1)
+	}
 
 	// Create exporter. It will connect on scrape and keep health probes running in background.
 	var err error
@@ -181,38 +234,13 @@ func Run() {
 	}()
 
 	/* ================ REST API ================ */
-	// basic
-	http.HandleFunc("/", TitleFunc)
-	http.HandleFunc("/version", VersionFunc)
-	// reload
-	http.HandleFunc("/reload", ReloadFunc)
-	// explain & stat
-	http.HandleFunc("/stat", PgExporter.StatFunc)
-	http.HandleFunc("/explain", PgExporter.ExplainFunc)
-	// alive
-	http.HandleFunc("/up", PgExporter.UpCheckFunc)
-	http.HandleFunc("/read", PgExporter.UpCheckFunc)
-	http.HandleFunc("/health", PgExporter.UpCheckFunc)
-	http.HandleFunc("/liveness", PgExporter.UpCheckFunc)
-	http.HandleFunc("/readiness", PgExporter.UpCheckFunc)
-	// primary
-	http.HandleFunc("/primary", PgExporter.PrimaryCheckFunc)
-	http.HandleFunc("/leader", PgExporter.PrimaryCheckFunc)
-	http.HandleFunc("/master", PgExporter.PrimaryCheckFunc)
-	http.HandleFunc("/read-write", PgExporter.PrimaryCheckFunc)
-	http.HandleFunc("/rw", PgExporter.PrimaryCheckFunc)
-	// replica
-	http.HandleFunc("/replica", PgExporter.ReplicaCheckFunc)
-	http.HandleFunc("/standby", PgExporter.ReplicaCheckFunc)
-	http.HandleFunc("/slave", PgExporter.ReplicaCheckFunc)
-	http.HandleFunc("/read-only", PgExporter.ReplicaCheckFunc)
-	http.HandleFunc("/ro", PgExporter.ReplicaCheckFunc)
-
-	http.Handle(*metricPath, promhttp.Handler())
+	mux := http.NewServeMux()
+	registerHTTPRoutes(mux, PgExporter, *metricPath, promhttp.Handler())
 
 	logInfof("pg_exporter for %s start, listen on %s%s", ShadowPGURL(*pgURL), listenAddr, *metricPath)
 
 	srv := &http.Server{
+		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      30 * time.Second,
