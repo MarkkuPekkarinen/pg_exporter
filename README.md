@@ -241,9 +241,10 @@ Configs lie in the core of `pg_exporter`. Actually, this project contains more l
 * A monolith battery-included config file: [`pg_exporter.yml`](pg_exporter.yml)
 * Separated metrics definition in [`config/`](config/)
 * Example of how to write a config file:  [`doc.yml`](config/0000-doc.yml)
+* Authoritative Histogram design: [`docs/design/histogram.md`](docs/design/histogram.md)
 * Legacy config bundle for PostgreSQL 9.1 - 9.6: [`legacy/`](legacy/) ([`legacy/README.md`](legacy/README.md))
 
-Current `pg_exporter` ships 57 collector definition files in [`config/`](config/). They are merged into [`pg_exporter.yml`](pg_exporter.yml) by `make conf`.
+Current `pg_exporter` ships 58 collector definition files in [`config/`](config/). They are merged into [`pg_exporter.yml`](pg_exporter.yml) by `make conf`.
 
 | File | Collector namespace(s) | Scope / requirement |
 |------|------------------------|---------------------|
@@ -272,6 +273,7 @@ Current `pg_exporter` ships 57 collector definition files in [`config/`](config/
 | [0390-pg_shmem.yml](config/0390-pg_shmem.yml) | `pg_shmem` | Shared memory allocation metrics; disabled by default and requires `schema:monitor` |
 | [0400-pg_wal.yml](config/0400-pg_wal.yml) | `pg_wal` | WAL statistics for PG14+; PG19 branch adds full-page-image byte metrics |
 | [0410-pg_activity.yml](config/0410-pg_activity.yml) | `pg_activity` | Backend activity counts by database and state |
+| [0415-pg_session.yml](config/0415-pg_session.yml) | `pg_session` | PG10+ cluster-wide age snapshots for active queries, transactions, client sessions, and backend XID horizons |
 | [0420-pg_wait.yml](config/0420-pg_wait.yml) | `pg_wait` | Backend wait counts by wait-event type |
 | [0430-pg_backend.yml](config/0430-pg_backend.yml) | `pg_backend` | Backend process counts grouped by `backend_type` |
 | [0440-pg_xact.yml](config/0440-pg_xact.yml) | `pg_xact` | Transaction snapshot boundaries and active transaction count |
@@ -407,6 +409,7 @@ Config files are using YAML format, there are lots of examples in the [config](h
 #                                  * LABEL:   use columnName=columnValue as a label in metric
 #                                  * GAUGE:   Mark column as a gauge metric, full name will be `<query.name>_<column.name>`
 #                                  * COUNTER: Same as above, except it is a counter rather than a gauge.
+#                                  * HISTOGRAM: Aggregate one observation per SQL row into a snapshot distribution.
 #          rename: ts         # [OPTIONAL] Alias, optional, the alias will be used instead of the column name
 #          description: xxxx  # [OPTIONAL] Description of the column, will be used as a metric description
 #          default: 0         # [OPTIONAL] Default value, will be used when column is NULL
@@ -442,6 +445,19 @@ Config files are using YAML format, there are lots of examples in the [config](h
 #          usage: COUNTER
 #          scale: 1e-3
 #          description: Total amount of time that has been spent in the portion of checkpoint processing where files are written to disk, in seconds
+#      - query_age_seconds:
+#          usage: HISTOGRAM
+#          bucket: [0.01, 0.03, 0.1, 0.3, 1, 3, 10, 30, 100, 300]  # finite increasing upper bounds
+#          description: Current active query age snapshot in seconds
+#
+#    # HISTOGRAM is rebuilt from the current SQL result whenever the query actually executes.
+#    # It emits cumulative `<name>_bucket{le=...}`, `<name>_count`, and `<name>_sum` Gauge series,
+#    # which may increase or decrease between snapshots. Query them directly with histogram_quantile():
+#    #   histogram_quantile(0.95, sum by (datname, le) (pg_session_query_age_seconds_bucket))
+#    # +Inf is automatic; the first finite bucket implicitly contains every lower value.
+#    # Signed domains should configure finite negative boundaries and zero; do not configure -Inf.
+#    # Do NOT apply rate(), irate(), or increase() to snapshot Histogram series.
+#    # See docs/design/histogram.md for the authoritative contract.
 
 #==============================================================#
 # 4. Collector Presets

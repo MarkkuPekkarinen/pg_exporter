@@ -15,15 +15,16 @@ const (
 	LABEL     = "LABEL"     // Use this column as a label
 	COUNTER   = "COUNTER"   // Use this column as a counter
 	GAUGE     = "GAUGE"     // Use this column as a gauge
-	HISTOGRAM = "HISTOGRAM" // Use this column as a histogram (not implemented yet)
+	HISTOGRAM = "HISTOGRAM" // Use this column as a snapshot histogram observation
 )
 
 // ColumnUsage determine how to use query result column
 var ColumnUsage = map[string]bool{
-	DISCARD: false,
-	LABEL:   false,
-	COUNTER: true,
-	GAUGE:   true,
+	DISCARD:   false,
+	LABEL:     false,
+	COUNTER:   true,
+	GAUGE:     true,
+	HISTOGRAM: true,
 }
 
 // Column holds the metadata of query result

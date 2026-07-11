@@ -45,6 +45,9 @@ func validateConstLabelConflicts(constLabels prometheus.Labels, queries map[stri
 		if q == nil {
 			continue
 		}
+		if _, exists := constLabels["le"]; exists && q.HasHistogram() {
+			return fmt.Errorf("const label %q conflicts with query %q (name=%q) generated Histogram bucket label %q", "le", branch, q.Name, "le")
+		}
 		for _, lbl := range q.LabelList() {
 			if _, exists := constLabels[lbl]; exists {
 				return fmt.Errorf("const label %q conflicts with query %q (name=%q) label %q", lbl, branch, q.Name, lbl)

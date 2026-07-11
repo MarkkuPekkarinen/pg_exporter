@@ -5,6 +5,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -19,6 +22,23 @@ type predicateCacheEntry struct {
 	pass bool
 }
 
+type histogramMetricDescriptors struct {
+	bucket *prometheus.Desc
+	count  *prometheus.Desc
+	sum    *prometheus.Desc
+}
+
+// histogramAccumulator holds one SQL result-set snapshot for one histogram
+// column and one complete (dynamic) label tuple. Server const labels are fixed
+// for the lifetime of a Collector, so they are implicitly part of this group.
+type histogramAccumulator struct {
+	column *Column
+	labels []string
+	counts []uint64 // non-cumulative counts; last element is the +Inf interval
+	count  uint64
+	sum    float64
+}
+
 // Collector holds runtime information of a Query running on a Server
 // It is deeply coupled with Server. Besides, it can be a collector itself
 type Collector struct {
@@ -28,9 +48,10 @@ type Collector struct {
 	// runtime information
 	lock          sync.RWMutex                // scrape lock
 	result        []prometheus.Metric         // cached metrics
-	descriptors   map[string]*prometheus.Desc // maps column index to descriptor, build on init
-	cacheHit      bool                        // indicate last scrape was served from cache or real execution
-	predicateSkip string                      // if nonempty, predicate query caused skip of this scrape
+	descriptors   map[string]*prometheus.Desc // scalar column name to descriptor, built on init
+	histogramDesc map[string]histogramMetricDescriptors
+	cacheHit      bool   // indicate last scrape was served from cache or real execution
+	predicateSkip string // if nonempty, predicate query caused skip of this scrape
 	err           error
 
 	// predicate cache. Entry i caches PredicateQueries[i] if it has a positive TTL.
@@ -79,7 +100,7 @@ func (q *Collector) Collect(ch chan<- prometheus.Metric) {
 		q.cacheHit = true
 		q.scrapeDone = time.Now()
 	}
-	q.sendMetrics(ch) // the cache is already reset to zero even execute failed
+	q.sendMetrics(ch) // a failed real execution intentionally leaves an empty result
 }
 
 // ResultSize report last scraped metric count
@@ -214,7 +235,11 @@ func (q *Collector) executePredicateQueries(ctx context.Context) bool {
 
 // execute will run this query to registered server, result and err are registered
 func (q *Collector) execute() {
-	q.result = q.result[:0] // reset cache
+	// A failed refresh must never publish a prefix of the new result or retain an
+	// old snapshot. Build the complete scrape locally and publish it only after
+	// rows, scalar metrics, and all histogram groups have been validated.
+	pending := q.result[:0]
+	q.result = nil
 	q.err = nil
 	q.predicateSkip = ""
 	var rows *sql.Rows
@@ -272,6 +297,20 @@ func (q *Collector) execute() {
 	if len(columnNames) != len(q.Columns) { // warn if column count not match
 		logWarnf("query [%s] column count not match, result %d ≠ config %d", q.Name, len(columnNames), len(q.Columns))
 	}
+	// A missing scalar column preserves the historic warn-and-skip behavior. A
+	// missing histogram column is an error because silently emitting no groups is
+	// indistinguishable from a valid empty population.
+	for _, metricName := range q.MetricNames {
+		column := q.Columns[metricName]
+		if column != nil && strings.EqualFold(column.Usage, HISTOGRAM) {
+			if _, found := columnIndexes[metricName]; !found {
+				q.err = fmt.Errorf("query [%s] missing histogram column %s.%s in result", q.Name, q.Name, metricName)
+				return
+			}
+		}
+	}
+
+	histograms := make(map[string]map[string]*histogramAccumulator)
 
 	// scan loop: for each row, extract labels from all label columns, then generate a new metric for each metric column
 	for rows.Next() {
@@ -296,13 +335,54 @@ func (q *Collector) execute() {
 		// get metrics, warn if column not exist
 		for _, metricName := range q.MetricNames {
 			if dataIndex, found := columnIndexes[metricName]; found { // the metric column is found in result
-				q.result = append(q.result,
-					prometheus.MustNewConstMetric(
-						q.descriptors[metricName], // always find desc & column via name
-						q.Columns[metricName].PrometheusValueType(),
-						castFloat64(colData[dataIndex], q.Columns[metricName]),
-						labels...,
-					))
+				column := q.Columns[metricName]
+				if strings.EqualFold(column.Usage, HISTOGRAM) {
+					value, present, castErr := castHistogramFloat64(colData[dataIndex], column)
+					if castErr != nil {
+						q.err = fmt.Errorf("query [%s] histogram column %s.%s: %w", q.Name, q.Name, metricName, castErr)
+						return
+					}
+					if !present {
+						continue
+					}
+
+					groups := histograms[metricName]
+					if groups == nil {
+						groups = make(map[string]*histogramAccumulator)
+						histograms[metricName] = groups
+					}
+					labelKey := encodeLabelTuple(labels)
+					accumulator := groups[labelKey]
+					if accumulator == nil {
+						accumulator = &histogramAccumulator{
+							column: column,
+							labels: append([]string(nil), labels...),
+							counts: make([]uint64, len(column.Bucket)+1),
+						}
+						groups[labelKey] = accumulator
+					}
+					bucketIndex := sort.SearchFloat64s(column.Bucket, value)
+					accumulator.counts[bucketIndex]++
+					accumulator.count++
+					accumulator.sum += value
+					if math.IsNaN(accumulator.sum) || math.IsInf(accumulator.sum, 0) {
+						q.err = fmt.Errorf("query [%s] histogram column %s.%s: non-finite observation sum", q.Name, q.Name, metricName)
+						return
+					}
+					continue
+				}
+
+				metric, metricErr := prometheus.NewConstMetric(
+					q.descriptors[metricName], // always find desc & column via name
+					column.PrometheusValueType(),
+					castFloat64(colData[dataIndex], column),
+					labels...,
+				)
+				if metricErr != nil {
+					q.err = fmt.Errorf("query [%s] failed building metric %s.%s: %w", q.Name, q.Name, metricName, metricErr)
+					return
+				}
+				pending = append(pending, metric)
 			} else {
 				logWarnf("missing metric column %s.%s in result", q.Name, metricName)
 			}
@@ -312,9 +392,80 @@ func (q *Collector) execute() {
 		q.err = fmt.Errorf("query [%s] failed while iterating rows: %w", q.Name, err)
 		return
 	}
+
+	// Emit histogram groups in config metric order and collision-safe label-key
+	// order. Each group is bucket(s), +Inf, count, then sum.
+	for _, metricName := range q.MetricNames {
+		column := q.Columns[metricName]
+		if column == nil || !strings.EqualFold(column.Usage, HISTOGRAM) {
+			continue
+		}
+		groups := histograms[metricName]
+		groupKeys := make([]string, 0, len(groups))
+		for groupKey := range groups {
+			groupKeys = append(groupKeys, groupKey)
+		}
+		sort.Strings(groupKeys)
+		for _, groupKey := range groupKeys {
+			accumulator := groups[groupKey]
+			metrics, metricErr := q.histogramMetrics(metricName, accumulator)
+			if metricErr != nil {
+				q.err = fmt.Errorf("query [%s] failed building histogram %s.%s: %w", q.Name, q.Name, metricName, metricErr)
+				return
+			}
+			pending = append(pending, metrics...)
+		}
+	}
+
+	q.result = pending
 	q.err = nil
 	logDebugf("query [%s] executing complete in %v, metrics count: %d",
 		q.Name, time.Since(q.scrapeBegin), len(q.result))
+}
+
+// histogramMetrics materializes a snapshot histogram as ordinary Gauge series.
+// It deliberately does not use prometheus.Histogram: SQL refreshes are
+// independent snapshots whose bucket/count/sum values may decrease.
+func (q *Collector) histogramMetrics(metricName string, accumulator *histogramAccumulator) ([]prometheus.Metric, error) {
+	descriptors, found := q.histogramDesc[metricName]
+	if !found {
+		return nil, fmt.Errorf("missing descriptors")
+	}
+
+	result := make([]prometheus.Metric, 0, len(accumulator.column.Bucket)+3)
+	bucketLabels := make([]string, len(accumulator.labels)+1)
+	copy(bucketLabels, accumulator.labels)
+	var cumulative uint64
+	for i, upperBound := range accumulator.column.Bucket {
+		cumulative += accumulator.counts[i]
+		bucketLabels[len(bucketLabels)-1] = strconv.FormatFloat(upperBound, 'g', -1, 64)
+		metric, err := prometheus.NewConstMetric(descriptors.bucket, prometheus.GaugeValue, float64(cumulative), bucketLabels...)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, metric)
+	}
+
+	cumulative += accumulator.counts[len(accumulator.column.Bucket)]
+	bucketLabels[len(bucketLabels)-1] = "+Inf"
+	metric, err := prometheus.NewConstMetric(descriptors.bucket, prometheus.GaugeValue, float64(cumulative), bucketLabels...)
+	if err != nil {
+		return nil, err
+	}
+	result = append(result, metric)
+
+	metric, err = prometheus.NewConstMetric(descriptors.count, prometheus.GaugeValue, float64(accumulator.count), accumulator.labels...)
+	if err != nil {
+		return nil, err
+	}
+	result = append(result, metric)
+
+	metric, err = prometheus.NewConstMetric(descriptors.sum, prometheus.GaugeValue, accumulator.sum, accumulator.labels...)
+	if err != nil {
+		return nil, err
+	}
+	result = append(result, metric)
+	return result, nil
 }
 
 /* ================ Collector Auxiliary ================ */
@@ -322,6 +473,7 @@ func (q *Collector) execute() {
 // makeDescMap will generate descriptor map from Query
 func (q *Collector) makeDescMap() {
 	descriptors := make(map[string]*prometheus.Desc)
+	histogramDescriptors := make(map[string]histogramMetricDescriptors)
 
 	// rename label name if label column have rename option
 	labelNames := make([]string, len(q.LabelNames))
@@ -337,21 +489,57 @@ func (q *Collector) makeDescMap() {
 	// rename metric if metric column have a rename option
 	for _, metricName := range q.MetricNames {
 		metricColumn := q.Columns[metricName] // always found
-		metricName := fmt.Sprintf("%s_%s", q.Name, metricColumn.Name)
+		prometheusName := fmt.Sprintf("%s_%s", q.Name, metricColumn.Name)
 		if metricColumn.Rename != "" {
-			metricName = fmt.Sprintf("%s_%s", q.Name, metricColumn.Rename)
+			prometheusName = fmt.Sprintf("%s_%s", q.Name, metricColumn.Rename)
+		}
+		if strings.EqualFold(metricColumn.Usage, HISTOGRAM) {
+			bucketLabelNames := append(append([]string(nil), labelNames...), "le")
+			histogramDescriptors[metricName] = histogramMetricDescriptors{
+				bucket: prometheus.NewDesc(
+					prometheusName+"_bucket", histogramHelp(metricColumn.Desc, "bucket"), bucketLabelNames, q.Server.labels,
+				),
+				count: prometheus.NewDesc(
+					prometheusName+"_count", histogramHelp(metricColumn.Desc, "count"), labelNames, q.Server.labels,
+				),
+				sum: prometheus.NewDesc(
+					prometheusName+"_sum", histogramHelp(metricColumn.Desc, "sum"), labelNames, q.Server.labels,
+				),
+			}
+			continue
 		}
 		descriptors[metricColumn.Name] = prometheus.NewDesc(
-			metricName, metricColumn.Desc, labelNames, q.Server.labels,
+			prometheusName, metricColumn.Desc, labelNames, q.Server.labels,
 		)
 	}
 	q.descriptors = descriptors
+	q.histogramDesc = histogramDescriptors
 }
 
 func (q *Collector) sendDescriptors(ch chan<- *prometheus.Desc) {
 	for _, desc := range q.descriptors {
 		ch <- desc
 	}
+	for _, descriptors := range q.histogramDesc {
+		ch <- descriptors.bucket
+		ch <- descriptors.count
+		ch <- descriptors.sum
+	}
+}
+
+func histogramHelp(description, component string) string {
+	suffix := map[string]string{
+		"bucket": "cumulative bucket",
+		"count":  "observation count",
+		"sum":    "observation sum",
+	}[component]
+	if suffix == "" {
+		suffix = component
+	}
+	if description == "" {
+		return suffix
+	}
+	return fmt.Sprintf("%s (%s)", description, suffix)
 }
 
 // cacheExpired report whether this instance needs actual execution

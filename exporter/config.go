@@ -2,6 +2,7 @@ package exporter
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -95,7 +96,12 @@ func ParseConfig(content []byte) (queries map[string]*Query, err error) {
 				switch column.Usage {
 				case LABEL:
 					labelColumns = append(labelColumns, column.Name)
-				case GAUGE, COUNTER:
+				case GAUGE, COUNTER, HISTOGRAM:
+					if column.Usage == HISTOGRAM {
+						if err := validateHistogramBuckets(column.Bucket); err != nil {
+							return nil, fmt.Errorf("query %q column %q: %w", branch, colName, err)
+						}
+					}
 					metricColumns = append(metricColumns, column.Name)
 				}
 				allColumns = append(allColumns, column.Name)
@@ -106,9 +112,10 @@ func ParseConfig(content []byte) (queries map[string]*Query, err error) {
 			}
 		}
 		if len(metricColumns) == 0 {
-			return nil, fmt.Errorf("query %q defines no GAUGE/COUNTER columns", branch)
+			return nil, fmt.Errorf("query %q defines no GAUGE/COUNTER/HISTOGRAM columns", branch)
 		}
 		query.Columns, query.ColumnNames, query.LabelNames, query.MetricNames = columns, allColumns, labelColumns, metricColumns
+		hasHistogram := query.HasHistogram()
 
 		// Validate prometheus label names and metric names. This prevents panics at scrape time.
 		seenLabels := make(map[string]bool, len(query.LabelNames))
@@ -124,13 +131,19 @@ func ParseConfig(content []byte) (queries map[string]*Query, err error) {
 			if err := validatePromLabelName(lbl); err != nil {
 				return nil, fmt.Errorf("query %q label %q: %w", branch, lbl, err)
 			}
+			if hasHistogram && lbl == "le" {
+				return nil, fmt.Errorf("query %q label %q conflicts with generated Histogram bucket label %q", branch, lbl, "le")
+			}
 			if seenLabels[lbl] {
 				return nil, fmt.Errorf("query %q has duplicate label name %q", branch, lbl)
 			}
 			seenLabels[lbl] = true
 		}
 
-		seenMetrics := make(map[string]bool, len(query.MetricNames))
+		// Reserve every logical base name and every emitted family name. Reserving
+		// Histogram bases as well keeps post-rename names unambiguous even though
+		// version 1 emits only the derived _bucket, _count, and _sum families.
+		seenMetrics := make(map[string]string, len(query.MetricNames)*4)
 		for _, metricColName := range query.MetricNames {
 			c := query.Columns[metricColName]
 			if c == nil {
@@ -144,13 +157,45 @@ func ParseConfig(content []byte) (queries map[string]*Query, err error) {
 			if err := validatePromMetricName(metricName); err != nil {
 				return nil, fmt.Errorf("query %q metric %q: %w", branch, metricName, err)
 			}
-			if seenMetrics[metricName] {
-				return nil, fmt.Errorf("query %q has duplicate metric name %q", branch, metricName)
+
+			familyNames := []string{metricName}
+			if c.Usage == HISTOGRAM {
+				familyNames = append(familyNames,
+					metricName+"_bucket",
+					metricName+"_count",
+					metricName+"_sum",
+				)
 			}
-			seenMetrics[metricName] = true
+			for _, familyName := range familyNames {
+				if err := validatePromMetricName(familyName); err != nil {
+					return nil, fmt.Errorf("query %q metric %q derived family %q: %w", branch, metricName, familyName, err)
+				}
+				if previous, exists := seenMetrics[familyName]; exists {
+					return nil, fmt.Errorf("query %q metric %q family %q conflicts with metric %q", branch, metricName, familyName, previous)
+				}
+				seenMetrics[familyName] = metricName
+			}
 		}
 	}
 	return
+}
+
+// validateHistogramBuckets validates the finite inclusive upper boundaries
+// configured for a snapshot Histogram. The +Inf bucket is generated at
+// collection time and must not appear in configuration.
+func validateHistogramBuckets(buckets []float64) error {
+	if len(buckets) == 0 {
+		return fmt.Errorf("HISTOGRAM requires at least one bucket")
+	}
+	for i, bucket := range buckets {
+		if math.IsNaN(bucket) || math.IsInf(bucket, 0) {
+			return fmt.Errorf("HISTOGRAM bucket[%d] must be finite, got %v", i, bucket)
+		}
+		if i > 0 && bucket <= buckets[i-1] {
+			return fmt.Errorf("HISTOGRAM buckets must be strictly increasing: bucket[%d]=%v follows %v", i, bucket, buckets[i-1])
+		}
+	}
+	return nil
 }
 
 func FinalizeQueries(queries map[string]*Query, source string) error {

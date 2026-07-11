@@ -133,6 +133,64 @@ func castFloat64(t interface{}, c *Column) float64 {
 	}
 }
 
+// castHistogramFloat64 converts one raw SQL histogram observation. A NULL is
+// absent unless the column explicitly defines a default. Histogram samples are
+// required to be finite because one invalid observation invalidates the whole
+// snapshot rather than publishing a partial distribution.
+func castHistogramFloat64(t interface{}, c *Column) (value float64, present bool, err error) {
+	if t == nil && (c == nil || !c.hasDefault) {
+		return 0, false, nil
+	}
+
+	scale := 1.0
+	if c != nil && c.hasScale {
+		scale = c.scaleFactor
+	}
+	if t == nil {
+		t = c.defaultValue
+	}
+
+	switch v := t.(type) {
+	case int64:
+		value = float64(v)
+	case float64:
+		value = v
+	case time.Time:
+		value = float64(v.Unix())
+	case []byte:
+		value, err = strconv.ParseFloat(string(v), 64)
+	case string:
+		value, err = strconv.ParseFloat(v, 64)
+	case bool:
+		if v {
+			value = 1
+		}
+	default:
+		err = fmt.Errorf("cannot cast %T to float64", t)
+	}
+	if err != nil {
+		return 0, false, err
+	}
+
+	value *= scale
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return 0, false, fmt.Errorf("non-finite observation %v", value)
+	}
+	return value, true, nil
+}
+
+// encodeLabelTuple returns an unambiguous map key for an ordered label tuple.
+// Length-prefixing avoids collisions such as ["a", "bc"] and ["ab", "c"].
+func encodeLabelTuple(labels []string) string {
+	var b strings.Builder
+	for _, label := range labels {
+		b.WriteString(strconv.Itoa(len(label)))
+		b.WriteByte(':')
+		b.WriteString(label)
+	}
+	return b.String()
+}
+
 // castString will force interface{} into string
 func castString(t interface{}) string {
 	switch v := t.(type) {

@@ -2,7 +2,7 @@
 # Desc      :   pg_exporter metrics collector definition
 # Ver       :   PostgreSQL 10 ~ 19+ and pgbouncer 1.9~1.25+
 # Ctime     :   2019-12-09
-# Mtime     :   2026-06-24
+# Mtime     :   2026-07-11
 # Homepage  :   https://pigsty.io/docs/pg_exporter
 # Author    :   Ruohang Feng (rh@vonng.com)
 # License   :   Apache-2.0 @ https://github.com/pgsty/pg_exporter
@@ -96,6 +96,7 @@
 #                                  * LABEL:   use columnName=columnValue as a label in metric
 #                                  * GAUGE:   Mark column as a gauge metric, full name will be `<query.name>_<column.name>`
 #                                  * COUNTER: Same as above, except it is a counter rather than a gauge.
+#                                  * HISTOGRAM: Aggregate one observation per SQL row into a snapshot distribution.
 #          rename: ts         # [OPTIONAL] Alias, optional, the alias will be used instead of the column name
 #          description: xxxx  # [OPTIONAL] Description of the column, will be used as a metric description
 #          default: 0         # [OPTIONAL] Default value, will be used when column is NULL
@@ -131,6 +132,19 @@
 #          usage: COUNTER
 #          scale: 1e-3
 #          description: Total amount of time that has been spent in the portion of checkpoint processing where files are written to disk, in seconds
+#      - query_age_seconds:
+#          usage: HISTOGRAM
+#          bucket: [0.01, 0.03, 0.1, 0.3, 1, 3, 10, 30, 100, 300]  # finite increasing upper bounds
+#          description: Current active query age snapshot in seconds
+#
+#    # HISTOGRAM is rebuilt from the current SQL result whenever the query actually executes.
+#    # It emits cumulative `<name>_bucket{le=...}`, `<name>_count`, and `<name>_sum` Gauge series,
+#    # which may increase or decrease between snapshots. Query them directly with histogram_quantile():
+#    #   histogram_quantile(0.95, sum by (datname, le) (pg_session_query_age_seconds_bucket))
+#    # +Inf is automatic; the first finite bucket implicitly contains every lower value.
+#    # Signed domains should configure finite negative boundaries and zero; do not configure -Inf.
+#    # Do NOT apply rate(), irate(), or increase() to snapshot Histogram series.
+#    # See docs/design/histogram.md for the authoritative contract.
 
 #==============================================================#
 # 4. Collector Presets
@@ -224,7 +238,6 @@
 #  pg_exporter will trigger the Planning procedure after connecting to the target. It will gather database facts
 #  and match them with tags and other metadata (such as supported version range). Collector will only
 #  be installed if and only if it is compatible with the target server.
-
 
 #==============================================================#
 # 0110 pg
@@ -1563,6 +1576,51 @@ pg_activity:
     - max_conn_duration: { usage: GAUGE ,description: "Max backend session duration since state change among (datname, state)" }
 
 
+#==============================================================#
+# 0415 pg_session
+#==============================================================#
+pg_session:
+  name: pg_session
+  desc: PostgreSQL client session age snapshot histograms by database and state
+  query: |-
+    SELECT datname,
+           state,
+           CASE
+             WHEN state = 'active' AND query_start IS NOT NULL
+             THEN greatest(0, extract(epoch FROM statement_timestamp() - query_start))
+           END AS query_age_seconds,
+           CASE
+             WHEN xact_start IS NOT NULL
+             THEN greatest(0, extract(epoch FROM statement_timestamp() - xact_start))
+           END AS xact_age_seconds,
+           CASE
+             WHEN backend_start IS NOT NULL
+             THEN greatest(0, extract(epoch FROM statement_timestamp() - backend_start))
+           END AS age_seconds,
+           CASE
+             WHEN backend_xid IS NOT NULL OR backend_xmin IS NOT NULL
+             THEN greatest(
+               0,
+               coalesce(age(backend_xid), 0),
+               coalesce(age(backend_xmin), 0)
+             )
+           END AS xid_age
+    FROM pg_stat_activity
+    WHERE pid <> pg_backend_pid()
+      AND backend_type = 'client backend'
+      AND datname IS NOT NULL;
+  ttl: 10
+  min_version: 100000
+  tags: [ cluster ]
+  metrics:
+    - datname:           { usage: LABEL     ,description: "Name of the database this backend is connected to" }
+    - state:             { usage: LABEL     ,description: "Current overall state of this backend" }
+    # Shared age buckets: compact 1-3-10 logarithmic grid from 10ms to about 35d.
+    - query_age_seconds: { usage: HISTOGRAM ,bucket: [0.01, 0.03, 0.1, 0.3, 1, 3, 10, 30, 100, 300, 1000, 3000, 10000, 30000, 100000, 300000, 1000000, 3000000] ,description: "Current active query age snapshot in seconds" }
+    - xact_age_seconds:  { usage: HISTOGRAM ,bucket: [0.01, 0.03, 0.1, 0.3, 1, 3, 10, 30, 100, 300, 1000, 3000, 10000, 30000, 100000, 300000, 1000000, 3000000] ,description: "Current transaction age snapshot in seconds" }
+    - age_seconds:       { usage: HISTOGRAM ,bucket: [0.01, 0.03, 0.1, 0.3, 1, 3, 10, 30, 100, 300, 1000, 3000, 10000, 30000, 100000, 300000, 1000000, 3000000] ,description: "Current client session age snapshot in seconds" }
+    # XID age uses a compact 1-2-5 logarithmic risk grid; policy thresholds stay outside the bucket lattice.
+    - xid_age:           { usage: HISTOGRAM ,bucket: [1000000, 2000000, 5000000, 10000000, 20000000, 50000000, 100000000, 200000000, 500000000, 1000000000, 2000000000] ,description: "Current backend oldest XID horizon age snapshot in transactions" }
 #==============================================================#
 # 0420 pg_wait
 #==============================================================#

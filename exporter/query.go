@@ -68,7 +68,8 @@ var queryTemplate, _ = texttmpl.New("Query").Parse(`##
 # METRICS
 {{- range .ColumnList }}
 #       {{ .Name }} ({{ .Usage }})
-#           {{ with .Desc }}{{ . }}{{ else }}N/A{{ end }}{{ end }}
+#           {{ with .Desc }}{{ . }}{{ else }}N/A{{ end }}{{ if .Bucket }}
+#           Bucket {{ .Bucket }}{{ end }}{{ end }}
 #
 {{.MarshalYAML -}}
 `)
@@ -189,6 +190,17 @@ func (q *Query) MetricList() (res []*MetricDesc) {
 		res[i] = column.MetricDesc(q.Name, q.LabelList())
 	}
 	return
+}
+
+// HasHistogram reports whether this query defines at least one logical
+// Histogram metric. Histogram components are derived later by the collector.
+func (q *Query) HasHistogram() bool {
+	for _, metricName := range q.MetricNames {
+		if column := q.Columns[metricName]; column != nil && column.Usage == HISTOGRAM {
+			return true
+		}
+	}
+	return false
 }
 
 // TimeoutDuration will turn timeout settings into time.Duration
