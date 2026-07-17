@@ -6,7 +6,7 @@
 
 [![Webite: https://pigsty.io/docs/pg_exporter](https://img.shields.io/badge/website-pigsty.io/docs/pg_exporter-slategray?style=flat&logo=cilium&logoColor=white)](https://pigsty.io/docs/pg_exporter)
 [![DockerHub: pgsty/pg_exporter](https://img.shields.io/badge/docker-pgsty/pg_exporter-slategray?style=flat&logo=docker&logoColor=white)](https://hub.docker.com/r/pgsty/pg_exporter)
-[![Version: 1.3.0](https://img.shields.io/badge/version-1.3.0-slategray?style=flat&logo=cilium&logoColor=white)](https://github.com/pgsty/pg_exporter/releases/tag/v1.3.0)
+[![Version: 1.4.0](https://img.shields.io/badge/version-1.4.0-slategray?style=flat&logo=cilium&logoColor=white)](https://github.com/pgsty/pg_exporter/releases/tag/v1.4.0)
 [![License: Apache-2.0](https://img.shields.io/github/license/pgsty/pg_exporter?logo=opensourceinitiative&logoColor=green&color=slategray)](https://github.com/pgsty/pg_exporter/blob/main/LICENSE)
 [![GitHub Stars](https://img.shields.io/github/stars/pgsty/pg_exporter?style=flat&logo=github&logoColor=black&color=slategray)](https://star-history.com/#pgsty/pg_exporter&Date)
 [![Go Report Card](https://goreportcard.com/badge/github.com/pgsty/pg_exporter)](https://goreportcard.com/report/github.com/pgsty/pg_exporter)
@@ -246,66 +246,66 @@ Configs lie in the core of `pg_exporter`. Actually, this project contains more l
 
 Current `pg_exporter` ships 58 collector definition files in [`config/`](config/). They are merged into [`pg_exporter.yml`](pg_exporter.yml) by `make conf`.
 
-| File | Collector namespace(s) | Scope / requirement |
-|------|------------------------|---------------------|
-| [0000-doc.yml](config/0000-doc.yml) | config reference | YAML schema and collector authoring guide; not an installed collector |
-| [0110-pg.yml](config/0110-pg.yml) | `pg` | PostgreSQL basic information, with primary and replica branches |
-| [0120-pg_meta.yml](config/0120-pg_meta.yml) | `pg_meta` | PostgreSQL cluster metadata; PG13+ includes `primary_conninfo` |
-| [0130-pg_setting.yml](config/0130-pg_setting.yml) | `pg_setting` | Shared PostgreSQL settings and capacity limits |
-| [0210-pg_repl.yml](config/0210-pg_repl.yml) | `pg_repl` | Replication sender statistics |
-| [0220-pg_sync_standby.yml](config/0220-pg_sync_standby.yml) | `pg_sync_standby` | Synchronous standby status |
-| [0230-pg_downstream.yml](config/0230-pg_downstream.yml) | `pg_downstream` | Downstream replication client counts |
-| [0240-pg_slot.yml](config/0240-pg_slot.yml) | `pg_slot` | Replication slots; PG16+ branches also work on standbys, and PG17+ recognizes the PG19 `idle_timeout` invalidation reason |
-| [0250-pg_recv.yml](config/0250-pg_recv.yml) | `pg_recv` | Replica WAL receiver metrics; PG13+ branch recognizes the PG19 `connecting` status |
-| [0260-pg_sub.yml](config/0260-pg_sub.yml) | `pg_sub` | Subscription stats; PG19 branch covers table/sequence sync errors and logical replication conflict counters |
-| [0270-pg_origin.yml](config/0270-pg_origin.yml) | `pg_origin` | Replication origin status; disabled by default and may need extra privileges |
-| [0300-pg_io.yml](config/0300-pg_io.yml) | `pg_io` | `pg_stat_io` metrics for PG16+, with PG18+ branch |
-| [0310-pg_size.yml](config/0310-pg_size.yml) | `pg_size` | Database, WAL, and log size metrics |
-| [0320-pg_archiver.yml](config/0320-pg_archiver.yml) | `pg_archiver` | Archiver process statistics |
-| [0330-pg_bgwriter.yml](config/0330-pg_bgwriter.yml) | `pg_bgwriter` | Background writer statistics, with PG17+ branch |
-| [0331-pg_checkpointer.yml](config/0331-pg_checkpointer.yml) | `pg_checkpointer` | Checkpointer statistics, with PG18+ `num_done` and `slru_written` metrics |
-| [0340-pg_ssl.yml](config/0340-pg_ssl.yml) | `pg_ssl` | SSL client connection counts |
-| [0350-pg_checkpoint.yml](config/0350-pg_checkpoint.yml) | `pg_checkpoint` | Checkpoint information from `pg_control_checkpoint` |
-| [0355-pg_timeline.yml](config/0355-pg_timeline.yml) | `pg_timeline` | Current timeline ID on primary or replica |
-| [0360-pg_recovery.yml](config/0360-pg_recovery.yml) | `pg_recovery`, `pg_recovery_prefetch` | Replica recovery and recovery-prefetch metrics |
-| [0370-pg_recovery_state.yml](config/0370-pg_recovery_state.yml) | `pg_recovery_state` | PG19 replica-only recovery state from `pg_stat_recovery` |
-| [0380-pg_slru.yml](config/0380-pg_slru.yml) | `pg_slru` | SLRU cache statistics for PG13+ |
-| [0390-pg_shmem.yml](config/0390-pg_shmem.yml) | `pg_shmem` | Shared memory allocation metrics; disabled by default and requires `schema:monitor` |
-| [0400-pg_wal.yml](config/0400-pg_wal.yml) | `pg_wal` | WAL statistics for PG14+; PG19 branch adds full-page-image byte metrics |
-| [0410-pg_activity.yml](config/0410-pg_activity.yml) | `pg_activity` | Backend activity counts by database and state |
-| [0415-pg_session.yml](config/0415-pg_session.yml) | `pg_session` | PG10+ cluster-wide age snapshots for active queries, transactions, client sessions, and backend XID horizons |
-| [0420-pg_wait.yml](config/0420-pg_wait.yml) | `pg_wait` | Backend wait counts by wait-event type |
-| [0430-pg_backend.yml](config/0430-pg_backend.yml) | `pg_backend` | Backend process counts grouped by `backend_type` |
-| [0440-pg_xact.yml](config/0440-pg_xact.yml) | `pg_xact` | Transaction snapshot boundaries and active transaction count |
-| [0450-pg_lock.yml](config/0450-pg_lock.yml) | `pg_lock` | Lock distribution by database and mode |
-| [0460-pg_lock_stat.yml](config/0460-pg_lock_stat.yml) | `pg_lock_stat` | PG19 cluster-wide lock waits, wait time, and fast-path overflow counts by lock type |
-| [0470-pg_query.yml](config/0470-pg_query.yml) | `pg_query` | Query metrics from `pg_stat_statements`; requires `extension:pg_stat_statements` |
-| [0510-pg_vacuuming.yml](config/0510-pg_vacuuming.yml) | `pg_vacuuming` | Primary-only VACUUM progress; PG18+ branch includes `delay_time` |
-| [0520-pg_indexing.yml](config/0520-pg_indexing.yml) | `pg_indexing` | Primary-only `CREATE INDEX` progress |
-| [0530-pg_clustering.yml](config/0530-pg_clustering.yml) | `pg_clustering` | Primary-only `CLUSTER` / `VACUUM FULL` progress |
-| [0540-pg_backup.yml](config/0540-pg_backup.yml) | `pg_backup` | Base backup progress for PG13+ |
-| [0610-pg_db.yml](config/0610-pg_db.yml) | `pg_db` | Database statistics; PG18+ branch includes parallel-worker launch counters |
-| [0620-pg_db_confl.yml](config/0620-pg_db_confl.yml) | `pg_db_confl` | Replica database conflict counters; PG16+ branch uses an explicit column list |
-| [0640-pg_pubrel.yml](config/0640-pg_pubrel.yml) | `pg_pubrel` | Publication and publication-relation counts |
-| [0650-pg_subrel.yml](config/0650-pg_subrel.yml) | `pg_subrel` | Subscription relation counts grouped by state |
-| [0660-pg_vacuum_score.yml](config/0660-pg_vacuum_score.yml) | `pg_vacuum_score` | PG19 current-database autovacuum score summary from `pg_stat_autovacuum_scores` |
-| [0700-pg_table.yml](config/0700-pg_table.yml) | `pg_table` | Per-table statistics; PG18+ branch includes vacuum/analyze time and new-page update counters |
-| [0710-pg_index.yml](config/0710-pg_index.yml) | `pg_index` | Per-index statistics |
-| [0720-pg_func.yml](config/0720-pg_func.yml) | `pg_func` | Function execution statistics |
-| [0730-pg_seq.yml](config/0730-pg_seq.yml) | `pg_seq` | Sequence metrics |
-| [0740-pg_relkind.yml](config/0740-pg_relkind.yml) | `pg_relkind` | Relation counts by relation kind |
-| [0750-pg_defpart.yml](config/0750-pg_defpart.yml) | `pg_defpart` | Default partition tuple counts |
-| [0810-pg_table_size.yml](config/0810-pg_table_size.yml) | `pg_table_size` | Per-table size metrics; can be slow on large schemas |
-| [0820-pg_table_bloat.yml](config/0820-pg_table_bloat.yml) | `pg_table_bloat` | Table bloat metrics; disabled by default and requires auxiliary view `pg_table_bloat` |
-| [0830-pg_index_bloat.yml](config/0830-pg_index_bloat.yml) | `pg_index_bloat` | B-tree index bloat metrics; disabled by default and requires auxiliary view `pg_index_bloat` |
-| [0910-pgbouncer_list.yml](config/0910-pgbouncer_list.yml) | `pgbouncer_list` | PgBouncer list metrics from the admin database |
-| [0920-pgbouncer_database.yml](config/0920-pgbouncer_database.yml) | `pgbouncer_database` | PgBouncer database metrics, with version-specific branches |
-| [0930-pgbouncer_stat.yml](config/0930-pgbouncer_stat.yml) | `pgbouncer_stat` | PgBouncer per-database stats, with version-specific branches |
-| [0940-pgbouncer_pool.yml](config/0940-pgbouncer_pool.yml) | `pgbouncer_pool` | PgBouncer pool metrics, with version-specific branches |
-| [1000-pg_wait_event.yml](config/1000-pg_wait_event.yml) | `pg_wait_event`, `pg_wait_event_1s` | Wait-event sampling; requires `extension:pg_wait_sampling` |
-| [1800-pg_tsdb_hypertable.yml](config/1800-pg_tsdb_hypertable.yml) | `pg_tsdb_hypertable` | TimescaleDB hypertable overview; disabled by default and requires `extension:timescaledb` plus `schema:timescaledb_information` |
-| [1900-pg_citus.yml](config/1900-pg_citus.yml) | `pg_citus_node` | Citus worker/coordinator node inventory; requires `extension:citus` |
-| [2000-pg_heartbeat.yml](config/2000-pg_heartbeat.yml) | `pg_heartbeat` | Monitor heartbeat table; disabled by default and requires `dbname:postgres` plus `schema:monitor` |
+| File                                                              | Collector namespace(s)                | Scope / requirement                                                                                                             |
+|-------------------------------------------------------------------|---------------------------------------|---------------------------------------------------------------------------------------------------------------------------------|
+| [0000-doc.yml](config/0000-doc.yml)                               | config reference                      | YAML schema and collector authoring guide; not an installed collector                                                           |
+| [0110-pg.yml](config/0110-pg.yml)                                 | `pg`                                  | PostgreSQL basic information, with primary and replica branches                                                                 |
+| [0120-pg_meta.yml](config/0120-pg_meta.yml)                       | `pg_meta`                             | PostgreSQL cluster metadata; PG13+ includes `primary_conninfo`                                                                  |
+| [0130-pg_setting.yml](config/0130-pg_setting.yml)                 | `pg_setting`                          | Shared PostgreSQL settings and capacity limits                                                                                  |
+| [0210-pg_repl.yml](config/0210-pg_repl.yml)                       | `pg_repl`                             | Replication sender statistics                                                                                                   |
+| [0220-pg_sync_standby.yml](config/0220-pg_sync_standby.yml)       | `pg_sync_standby`                     | Synchronous standby status                                                                                                      |
+| [0230-pg_downstream.yml](config/0230-pg_downstream.yml)           | `pg_downstream`                       | Downstream replication client counts                                                                                            |
+| [0240-pg_slot.yml](config/0240-pg_slot.yml)                       | `pg_slot`                             | Replication slots; PG16+ branches also work on standbys, and PG17+ recognizes the PG19 `idle_timeout` invalidation reason       |
+| [0250-pg_recv.yml](config/0250-pg_recv.yml)                       | `pg_recv`                             | Replica WAL receiver metrics; PG13+ branch recognizes the PG19 `connecting` status                                              |
+| [0260-pg_sub.yml](config/0260-pg_sub.yml)                         | `pg_sub`                              | Subscription stats; PG19 branch covers table/sequence sync errors and logical replication conflict counters                     |
+| [0270-pg_origin.yml](config/0270-pg_origin.yml)                   | `pg_origin`                           | Replication origin status; disabled by default and may need extra privileges                                                    |
+| [0300-pg_io.yml](config/0300-pg_io.yml)                           | `pg_io`                               | `pg_stat_io` metrics for PG16+, with PG18+ branch                                                                               |
+| [0310-pg_size.yml](config/0310-pg_size.yml)                       | `pg_size`                             | Database, WAL, and log size metrics                                                                                             |
+| [0320-pg_archiver.yml](config/0320-pg_archiver.yml)               | `pg_archiver`                         | Archiver process statistics                                                                                                     |
+| [0330-pg_bgwriter.yml](config/0330-pg_bgwriter.yml)               | `pg_bgwriter`                         | Background writer statistics, with PG17+ branch                                                                                 |
+| [0331-pg_checkpointer.yml](config/0331-pg_checkpointer.yml)       | `pg_checkpointer`                     | Checkpointer statistics, with PG18+ `num_done` and `slru_written` metrics                                                       |
+| [0340-pg_ssl.yml](config/0340-pg_ssl.yml)                         | `pg_ssl`                              | SSL client connection counts                                                                                                    |
+| [0350-pg_checkpoint.yml](config/0350-pg_checkpoint.yml)           | `pg_checkpoint`                       | Checkpoint information from `pg_control_checkpoint`                                                                             |
+| [0355-pg_timeline.yml](config/0355-pg_timeline.yml)               | `pg_timeline`                         | Current timeline ID on primary or replica                                                                                       |
+| [0360-pg_recovery.yml](config/0360-pg_recovery.yml)               | `pg_recovery`, `pg_recovery_prefetch` | Replica recovery and recovery-prefetch metrics                                                                                  |
+| [0370-pg_recovery_state.yml](config/0370-pg_recovery_state.yml)   | `pg_recovery_state`                   | PG19 replica-only recovery state from `pg_stat_recovery`                                                                        |
+| [0380-pg_slru.yml](config/0380-pg_slru.yml)                       | `pg_slru`                             | SLRU cache statistics for PG13+                                                                                                 |
+| [0390-pg_shmem.yml](config/0390-pg_shmem.yml)                     | `pg_shmem`                            | Shared memory allocation metrics; disabled by default and requires `schema:monitor`                                             |
+| [0400-pg_wal.yml](config/0400-pg_wal.yml)                         | `pg_wal`                              | WAL statistics for PG14+; PG19 branch adds full-page-image byte metrics                                                         |
+| [0410-pg_activity.yml](config/0410-pg_activity.yml)               | `pg_activity`                         | Backend activity counts by database and state                                                                                   |
+| [0420-pg_wait.yml](config/0420-pg_wait.yml)                       | `pg_wait`                             | Backend wait counts by wait-event type                                                                                          |
+| [0430-pg_backend.yml](config/0430-pg_backend.yml)                 | `pg_backend`                          | Backend process counts grouped by `backend_type`                                                                                |
+| [0440-pg_xact.yml](config/0440-pg_xact.yml)                       | `pg_xact`                             | Transaction snapshot boundaries and active transaction count                                                                    |
+| [0450-pg_xact_age.yml](config/0450-pg_xact_age.yml)               | `pg_xact_age`                         | PG10+ cluster-wide open-transaction and idle-in-transaction age snapshot histograms per database                                |
+| [0460-pg_lock.yml](config/0460-pg_lock.yml)                       | `pg_lock`                             | Lock distribution by database and mode                                                                                          |
+| [0470-pg_lock_stat.yml](config/0470-pg_lock_stat.yml)             | `pg_lock_stat`                        | PG19 cluster-wide lock waits, wait time, and fast-path overflow counts by lock type                                             |
+| [0480-pg_query.yml](config/0480-pg_query.yml)                     | `pg_query`                            | Query metrics from `pg_stat_statements`; requires `extension:pg_stat_statements`                                                |
+| [0510-pg_vacuuming.yml](config/0510-pg_vacuuming.yml)             | `pg_vacuuming`                        | Primary-only VACUUM progress; PG18+ branch includes `delay_time`                                                                |
+| [0520-pg_indexing.yml](config/0520-pg_indexing.yml)               | `pg_indexing`                         | Primary-only `CREATE INDEX` progress                                                                                            |
+| [0530-pg_clustering.yml](config/0530-pg_clustering.yml)           | `pg_clustering`                       | Primary-only `CLUSTER` / `VACUUM FULL` progress                                                                                 |
+| [0540-pg_backup.yml](config/0540-pg_backup.yml)                   | `pg_backup`                           | Base backup progress for PG13+                                                                                                  |
+| [0610-pg_db.yml](config/0610-pg_db.yml)                           | `pg_db`                               | Database statistics; PG18+ branch includes parallel-worker launch counters                                                      |
+| [0620-pg_db_confl.yml](config/0620-pg_db_confl.yml)               | `pg_db_confl`                         | Replica database conflict counters; PG16+ branch uses an explicit column list                                                   |
+| [0640-pg_pubrel.yml](config/0640-pg_pubrel.yml)                   | `pg_pubrel`                           | Publication and publication-relation counts                                                                                     |
+| [0650-pg_subrel.yml](config/0650-pg_subrel.yml)                   | `pg_subrel`                           | Subscription relation counts grouped by state                                                                                   |
+| [0660-pg_vacuum_score.yml](config/0660-pg_vacuum_score.yml)       | `pg_vacuum_score`                     | PG19 current-database autovacuum score summary from `pg_stat_autovacuum_scores`                                                 |
+| [0700-pg_table.yml](config/0700-pg_table.yml)                     | `pg_table`                            | Per-table statistics; PG18+ branch includes vacuum/analyze time and new-page update counters                                    |
+| [0710-pg_index.yml](config/0710-pg_index.yml)                     | `pg_index`                            | Per-index statistics                                                                                                            |
+| [0720-pg_func.yml](config/0720-pg_func.yml)                       | `pg_func`                             | Function execution statistics                                                                                                   |
+| [0730-pg_seq.yml](config/0730-pg_seq.yml)                         | `pg_seq`                              | Sequence metrics                                                                                                                |
+| [0740-pg_relkind.yml](config/0740-pg_relkind.yml)                 | `pg_relkind`                          | Relation counts by relation kind                                                                                                |
+| [0750-pg_defpart.yml](config/0750-pg_defpart.yml)                 | `pg_defpart`                          | Default partition tuple counts                                                                                                  |
+| [0810-pg_table_size.yml](config/0810-pg_table_size.yml)           | `pg_table_size`                       | Per-table size metrics; can be slow on large schemas                                                                            |
+| [0820-pg_table_bloat.yml](config/0820-pg_table_bloat.yml)         | `pg_table_bloat`                      | Table bloat metrics; disabled by default and requires auxiliary view `pg_table_bloat`                                           |
+| [0830-pg_index_bloat.yml](config/0830-pg_index_bloat.yml)         | `pg_index_bloat`                      | B-tree index bloat metrics; disabled by default and requires auxiliary view `pg_index_bloat`                                    |
+| [0910-pgbouncer_list.yml](config/0910-pgbouncer_list.yml)         | `pgbouncer_list`                      | PgBouncer list metrics from the admin database                                                                                  |
+| [0920-pgbouncer_database.yml](config/0920-pgbouncer_database.yml) | `pgbouncer_database`                  | PgBouncer database metrics, with version-specific branches                                                                      |
+| [0930-pgbouncer_stat.yml](config/0930-pgbouncer_stat.yml)         | `pgbouncer_stat`                      | PgBouncer per-database stats, with version-specific branches                                                                    |
+| [0940-pgbouncer_pool.yml](config/0940-pgbouncer_pool.yml)         | `pgbouncer_pool`                      | PgBouncer pool metrics, with version-specific branches                                                                          |
+| [1000-pg_wait_event.yml](config/1000-pg_wait_event.yml)           | `pg_wait_event`, `pg_wait_event_1s`   | Wait-event sampling; requires `extension:pg_wait_sampling`                                                                      |
+| [1800-pg_tsdb_hypertable.yml](config/1800-pg_tsdb_hypertable.yml) | `pg_tsdb_hypertable`                  | TimescaleDB hypertable overview; disabled by default and requires `extension:timescaledb` plus `schema:timescaledb_information` |
+| [1900-pg_citus.yml](config/1900-pg_citus.yml)                     | `pg_citus_node`                       | Citus worker/coordinator node inventory; requires `extension:citus`                                                             |
+| [2000-pg_heartbeat.yml](config/2000-pg_heartbeat.yml)             | `pg_heartbeat`                        | Monitor heartbeat table; disabled by default and requires `dbname:postgres` plus `schema:monitor`                               |
 
 
 
@@ -445,15 +445,15 @@ Config files are using YAML format, there are lots of examples in the [config](h
 #          usage: COUNTER
 #          scale: 1e-3
 #          description: Total amount of time that has been spent in the portion of checkpoint processing where files are written to disk, in seconds
-#      - query_age_seconds:
+#      - xact_age_seconds:
 #          usage: HISTOGRAM
-#          bucket: [0.01, 0.03, 0.1, 0.3, 1, 3, 10, 30, 100, 300]  # finite increasing upper bounds
-#          description: Current active query age snapshot in seconds
+#          bucket: [1, 3, 10, 30, 100, 300, 1000, 3000]  # finite increasing upper bounds
+#          description: Open transaction age snapshot in seconds
 #
 #    # HISTOGRAM is rebuilt from the current SQL result whenever the query actually executes.
 #    # It emits cumulative `<name>_bucket{le=...}`, `<name>_count`, and `<name>_sum` Gauge series,
 #    # which may increase or decrease between snapshots. Query them directly with histogram_quantile():
-#    #   histogram_quantile(0.95, sum by (datname, le) (pg_session_query_age_seconds_bucket))
+#    #   histogram_quantile(0.95, sum by (datname, le) (pg_xact_age_seconds_bucket))
 #    # +Inf is automatic; the first finite bucket implicitly contains every lower value.
 #    # Signed domains should configure finite negative boundaries and zero; do not configure -Inf.
 #    # Do NOT apply rate(), irate(), or increase() to snapshot Histogram series.

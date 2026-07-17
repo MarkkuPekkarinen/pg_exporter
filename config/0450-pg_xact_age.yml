@@ -1,0 +1,26 @@
+#==============================================================#
+# 0450 pg_xact_age
+#==============================================================#
+pg_xact_age:
+  name: pg_xact_age
+  desc: PostgreSQL open transaction age snapshot histograms by database
+  query: |-
+    SELECT datname,
+           greatest(0, extract(epoch FROM now() - xact_start)) AS seconds,
+           CASE WHEN state LIKE 'idle in transaction%' THEN greatest(0, extract(epoch FROM now() - xact_start)) END AS idle_seconds
+    FROM pg_stat_activity WHERE pid <> pg_backend_pid() AND backend_type = 'client backend' AND datname IS NOT NULL AND xact_start IS NOT NULL;
+  ttl: 10
+  min_version: 100000
+  tags: [ cluster ]
+  metrics:
+    - datname:      { usage: LABEL     ,description: "Name of the database this backend is connected to" }
+    # 1-3-10 log grid from 1s to ~28h; sub-second ages are sampling noise for snapshots.
+    # seconds covers every open transaction, including implicit autocommit ones in
+    # flight, so _count is the current open-transaction count; low buckets absorb
+    # that healthy churn.
+    - seconds:      { usage: HISTOGRAM ,bucket: [1, 3, 10, 30, 100, 300, 1000, 3000, 10000, 30000, 100000] ,description: "Open transaction age snapshot in seconds" }
+    # idle_seconds covers the idle-in-transaction subset; capped at 3000s (~50min)
+    # since anything older is uniformly critical and lands in +Inf.
+    - idle_seconds: { usage: HISTOGRAM ,bucket: [1, 3, 10, 30, 100, 300, 1000, 3000] ,description: "Idle-in-transaction age snapshot in seconds" }
+
+

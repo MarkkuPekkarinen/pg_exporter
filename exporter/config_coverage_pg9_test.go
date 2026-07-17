@@ -1,28 +1,13 @@
 package exporter
 
 import (
-	"os"
-	"path/filepath"
-	"runtime"
 	"testing"
 )
 
 // Ensure the legacy config (legacy/config) covers PG9.1..PG9.6 without version
 // gaps for collectors that are supposed to work on legacy PG9.x.
 func TestConfigCoveragePG9(t *testing.T) {
-	_, thisFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller failed")
-	}
-	configDir := filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", "legacy", "config"))
-	if _, err := os.Stat(configDir); err != nil {
-		t.Skipf("legacy config dir not found: %s: %v", configDir, err)
-	}
-
-	queries, err := LoadConfig(configDir)
-	if err != nil {
-		t.Fatalf("LoadConfig(%s) failed: %v", configDir, err)
-	}
+	queries := loadConfigDirForTest(t, "legacy/config")
 
 	byName := make(map[string][]*Query)
 	for _, q := range queries {
@@ -63,14 +48,7 @@ func TestConfigCoveragePG9(t *testing.T) {
 				continue
 			}
 
-			// Multiple branches for the same Name are only acceptable when they are
-			// mutually exclusive via tags (e.g. primary vs replica).
-			if len(appl) > 1 {
-				if name == "pg" && len(appl) == 2 &&
-					((appl[0].HasTag("primary") && appl[1].HasTag("replica")) ||
-						(appl[0].HasTag("replica") && appl[1].HasTag("primary"))) {
-					continue
-				}
+			if len(appl) > 1 && !branchesMutuallyExclusive(appl) {
 				t.Errorf("collector %q has %d overlapping branches for server_version_num=%d: %v", name, len(appl), v, func() []string {
 					out := make([]string, 0, len(appl))
 					for _, q := range appl {

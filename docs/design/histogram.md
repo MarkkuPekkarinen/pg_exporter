@@ -3,8 +3,8 @@
 | Field | Value |
 | --- | --- |
 | Status | Final |
-| Version | 1.2 |
-| Last updated | 2026-07-11 |
+| Version | 1.3 |
+| Last updated | 2026-07-17 |
 | Scope | SQL observations aggregated into classic Prometheus bucket series |
 | Authority | Normative design for the first pg_exporter Histogram implementation |
 
@@ -49,19 +49,16 @@ behavior.
 
 ## 3. Rationale
 
-The version 1.2 reference use cases are the current per-session distributions
-of:
+The current reference use cases are the per-database distributions of:
 
-1. active query age;
-2. transaction age;
-3. client session age;
-4. the oldest backend XID horizon age derived from `backend_xid` and
-   `backend_xmin`.
+1. open transaction age, over every client backend that holds an `xact_start`;
+2. idle-in-transaction age, over the idle-in-transaction subset of the same
+   backends.
 
 Every population can shrink, disappear, or move between buckets. For example,
-an active query disappears when it completes, while a running query moves from
-smaller age buckets to larger age buckets. These values are not
-monotonic across scrapes.
+an open transaction disappears when it commits or rolls back, while a
+long-running transaction moves from smaller age buckets to larger age buckets.
+These values are not monotonic across scrapes.
 
 The Go `prometheus.Collector` interface does not require separate collector
 implementations for counter and gauge Histograms. The row grouping and bucket
@@ -104,10 +101,10 @@ The canonical version 1 syntax reuses the existing `Column.Bucket` field and
 its singular YAML key:
 
 ```yaml
-- query_age_seconds:
+- seconds:
     usage: HISTOGRAM
-    bucket: [0.01, 0.03, 0.1, 0.3, 1, 3, 10, 30, 100, 300, 1000, 3000, 10000, 30000, 100000, 300000, 1000000, 3000000]
-    description: Current active query age snapshot in seconds
+    bucket: [1, 3, 10, 30, 100, 300, 1000, 3000, 10000, 30000, 100000]
+    description: Open transaction age snapshot in seconds
 ```
 
 `usage` remains case-insensitive during parsing and MUST be normalized to
@@ -149,8 +146,8 @@ below `b0`, including negative values, are counted in the first bucket.
 For a domain that legitimately contains signed observations, users SHOULD add
 finite negative boundaries appropriate to the domain and a `0` boundary, for
 example `[-100, -10, -1, 0, 1, 10, 100]`. This preserves useful resolution on
-both sides of zero; it does not change the implicit lower edge. The version 1.2
-PostgreSQL reference observations are non-negative and are clamped in SQL.
+both sides of zero; it does not change the implicit lower edge. The reference
+PostgreSQL observations are non-negative and are clamped in SQL.
 
 ### 5.3 Query column classification
 
@@ -222,8 +219,7 @@ metric-construction errors are reported instead of panicking. It does not
 change successful scalar metric names, types, labels, or values.
 
 Negative observations are valid at the generic aggregation layer. Reference
-time-age and XID-horizon collectors MUST clamp or filter impossible negative
-values in SQL.
+time-age collectors MUST clamp or filter impossible negative values in SQL.
 
 ### 6.3 Missing columns
 
@@ -311,19 +307,19 @@ label-tuple order where practical.
 Version 1 exposes each component with `prometheus.GaugeValue`:
 
 ```text
-# HELP pg_session_query_age_seconds_bucket Current active query age snapshot in seconds (cumulative bucket)
-# TYPE pg_session_query_age_seconds_bucket gauge
-pg_session_query_age_seconds_bucket{datname="app",state="active",le="0.1"} 7
-pg_session_query_age_seconds_bucket{datname="app",state="active",le="1"} 11
-pg_session_query_age_seconds_bucket{datname="app",state="active",le="+Inf"} 12
+# HELP pg_xact_age_seconds_bucket Open transaction age snapshot in seconds (cumulative bucket)
+# TYPE pg_xact_age_seconds_bucket gauge
+pg_xact_age_seconds_bucket{datname="app",le="10"} 7
+pg_xact_age_seconds_bucket{datname="app",le="30"} 11
+pg_xact_age_seconds_bucket{datname="app",le="+Inf"} 12
 
-# HELP pg_session_query_age_seconds_count Current active query age snapshot in seconds (observation count)
-# TYPE pg_session_query_age_seconds_count gauge
-pg_session_query_age_seconds_count{datname="app",state="active"} 12
+# HELP pg_xact_age_seconds_count Open transaction age snapshot in seconds (observation count)
+# TYPE pg_xact_age_seconds_count gauge
+pg_xact_age_seconds_count{datname="app"} 12
 
-# HELP pg_session_query_age_seconds_sum Current active query age snapshot in seconds (observation sum)
-# TYPE pg_session_query_age_seconds_sum gauge
-pg_session_query_age_seconds_sum{datname="app",state="active"} 8.73
+# HELP pg_xact_age_seconds_sum Open transaction age snapshot in seconds (observation sum)
+# TYPE pg_xact_age_seconds_sum gauge
+pg_xact_age_seconds_sum{datname="app"} 187.4
 ```
 
 The `+Inf` bucket value MUST equal `_count`.
@@ -431,17 +427,17 @@ future retry-on-error policy requires a separate lifecycle change.
 
 ## 10. Reference PostgreSQL collectors
 
-Version 1.2 is accepted only when it supports the `pg_session` reference query
-family and its four logical Histograms.
+Version 1.3 is accepted only when it supports the `pg_xact_age` reference query
+family and its two logical Histograms.
 
-### 10.1 Session snapshot Histograms
+### 10.1 Open transaction age snapshot Histograms
 
-The compact `pg_session` namespace makes the exported names suitable for
+The compact `pg_xact_age` namespace makes the exported names suitable for
 routine dashboard and alert use. Its execution controls are normative:
 
 ```yaml
-pg_session:
-  name: pg_session
+pg_xact_age:
+  name: pg_xact_age
   ttl: 10
   min_version: 100000
   tags: [cluster]
@@ -456,212 +452,151 @@ PostgreSQL 10+ reference SQL:
 
 ```sql
 SELECT datname,
-       state,
-       CASE
-         WHEN state = 'active' AND query_start IS NOT NULL
-         THEN greatest(0, extract(epoch FROM statement_timestamp() - query_start))
-       END AS query_age_seconds,
-       CASE
-         WHEN xact_start IS NOT NULL
-         THEN greatest(0, extract(epoch FROM statement_timestamp() - xact_start))
-       END AS xact_age_seconds,
-       CASE
-         WHEN backend_start IS NOT NULL
-         THEN greatest(0, extract(epoch FROM statement_timestamp() - backend_start))
-       END AS age_seconds,
-       CASE
-         WHEN backend_xid IS NOT NULL OR backend_xmin IS NOT NULL
-         THEN greatest(
-           0,
-           coalesce(age(backend_xid), 0),
-           coalesce(age(backend_xmin), 0)
-         )
-       END AS xid_age
-FROM pg_stat_activity
-WHERE pid <> pg_backend_pid()
-  AND backend_type = 'client backend'
-  AND datname IS NOT NULL;
+       greatest(0, extract(epoch FROM now() - xact_start)) AS seconds,
+       CASE WHEN state LIKE 'idle in transaction%' THEN greatest(0, extract(epoch FROM now() - xact_start)) END AS idle_seconds
+FROM pg_stat_activity WHERE pid <> pg_backend_pid() AND backend_type = 'client backend' AND datname IS NOT NULL AND xact_start IS NOT NULL;
 ```
 
 The monitoring role MUST be able to see activity details for other sessions;
 membership in `pg_monitor` (or equivalent `pg_read_all_stats` privileges) is
-the reference deployment requirement. The SQL still guards nullable timestamp
-and XID fields so masked or unavailable values cannot become false zero-valued
-observations.
+the reference deployment requirement. The WHERE clause filters the nullable
+`xact_start` timestamp at the source, so backends without an open transaction
+(or with privilege-masked values) are excluded instead of becoming false
+zero-valued observations, and the majority idle population is never fetched.
 
-Required labels:
+Required label:
 
 ```text
-datname, state
+datname
 ```
 
 The reference collector MUST NOT label by `pid`, `usename`, `application_name`,
-`query_id`, `wait_event`, or query text.
+`query_id`, `wait_event`, `state`, or query text. State semantics are carried by
+the two column filters rather than by a label: `seconds` observes every open
+transaction that holds an `xact_start`, and `idle_seconds` observes the
+idle-in-transaction subset. The `_count` of the `seconds` family therefore
+doubles as the current open-transaction count per database.
 
-### 10.2 Shared time-age buckets
+### 10.2 Open transaction age buckets
 
-All three second-valued observations MUST use the same boundaries:
-
-```yaml
-- query_age_seconds:
-    usage: HISTOGRAM
-    bucket: [0.01, 0.03, 0.1, 0.3, 1, 3, 10, 30, 100, 300, 1000, 3000, 10000, 30000, 100000, 300000, 1000000, 3000000]
-    description: Current active query age snapshot in seconds
-
-- xact_age_seconds:
-    usage: HISTOGRAM
-    bucket: [0.01, 0.03, 0.1, 0.3, 1, 3, 10, 30, 100, 300, 1000, 3000, 10000, 30000, 100000, 300000, 1000000, 3000000]
-    description: Current transaction age snapshot in seconds
-
-- age_seconds:
-    usage: HISTOGRAM
-    bucket: [0.01, 0.03, 0.1, 0.3, 1, 3, 10, 30, 100, 300, 1000, 3000, 10000, 30000, 100000, 300000, 1000000, 3000000]
-    description: Current client session age snapshot in seconds
-```
-
-The boundaries form a compact engineering logarithmic grid. Within each
-decade, the finite upper bounds are `1` and `3` times a power of ten. Adjacent
-ratios therefore alternate between `3` and approximately `3.33`, rather than
-varying from `2` to `7` as they did in version 1.1. The grid spans `10 ms` to
-`3,000,000 s` (about `34.7 d`), uses 18 finite boundaries, and emits 21 series
-per populated label tuple including `+Inf`, count, and sum.
-
-This grid is a **distribution resolution lattice**, not a list of operating
-policies. Pigsty and PostgreSQL thresholds such as `100 ms`, `1 s`, `60 s`,
-`600 s`, `1 h`, or `1 d` remain useful dashboard and alert context, but they do
-not all become bucket boundaries. Values such as `100 ms`, `1 s`, `10 s`,
-`30 s`, and `300 s` happen to align with the lattice; that coincidence is not
-a rule for adding future boundaries.
-
-The compact grid deliberately trades some short-range quantile precision for
-stable visual proportions and bounded cardinality. These metrics describe
-live snapshot ages rather than completed request latency SLOs, so this is the
-appropriate default tradeoff. A deployment that requires an exact count above
-a non-boundary policy threshold SHOULD use an existing maximum-age Gauge or a
-dedicated threshold Gauge. It SHOULD NOT distort the shared Histogram lattice
-with every local policy value. Dashboards SHOULD treat `le` as numeric and use
-a logarithmic value axis for distribution plots.
-
-Using identical boundaries for query, transaction, and session ages keeps
-their dashboards and recording rules comparable.
-
-These observations are **live ages**, sampled from sessions that still exist
-at collection time. They are not completed-query, completed-transaction, or
-completed-session latency distributions. Long-lived observations are more
-likely to appear in repeated snapshots, so statistical interpretation is
-length-biased. An instant quantile answers a question about the current live
-population only.
-
-The `query_age_seconds` population includes only `state='active'` rows.
-`query_start` MUST NOT be interpreted as the current query start for other
-states.
-
-### 10.3 Backend XID-horizon buckets
-
-The backend horizon observation MUST use these boundaries:
+The two Histograms observe the same quantity, the age in seconds of an open
+transaction measured from `xact_start`, over two nested populations. They use
+a `1, 3, 10` logarithmic grid that starts at `1 s`:
 
 ```yaml
-- xid_age:
+- seconds:
     usage: HISTOGRAM
-    bucket: [1000000, 2000000, 5000000, 10000000, 20000000, 50000000, 100000000, 200000000, 500000000, 1000000000, 2000000000]
-    description: Current backend oldest XID horizon age snapshot in transactions
+    bucket: [1, 3, 10, 30, 100, 300, 1000, 3000, 10000, 30000, 100000]
+    description: Open transaction age snapshot in seconds
+
+- idle_seconds:
+    usage: HISTOGRAM
+    bucket: [1, 3, 10, 30, 100, 300, 1000, 3000]
+    description: Idle-in-transaction age snapshot in seconds
 ```
 
-For each backend, `xid_age` is the greater non-negative age of `backend_xid`
-and `backend_xmin`. It is absent only when both fields are NULL. Including both
-fields matters: an open transaction may own an old XID, while a backend may
-hold an older snapshot horizon through `backend_xmin`.
+The grid is a **distribution resolution lattice**, not a list of operating
+policies. Within each decade the finite upper bounds are `1` and `3` times a
+power of ten, so adjacent ratios alternate between `3` and approximately
+`3.33`. The `seconds` family spans `1 s` to `100000 s` (about `27.8 h`), uses
+11 finite boundaries, and emits 14 series per populated database including
+`+Inf`, count, and sum. The `idle_seconds` family caps at `3000 s` (about
+`50 min`), uses 8 finite boundaries, and emits 11 series per populated
+database.
 
-The boundaries form a `1, 2, 5` engineering logarithmic grid from `1m` to
-`2b`. Adjacent ratios alternate between `2` and `2.5`. Values at or below `1m`
-share the first finite bucket; they are normal for this risk-oriented view.
-The generated `+Inf` bucket isolates observations above `2b` as the final
-emergency band. Eleven finite boundaries emit 14 series per populated label
-tuple.
+Buckets deliberately start at `1 s`. These are **snapshot** Histograms sampled
+once per real execution, so they are length-biased by the inspection paradox:
+a short-lived object is unlikely to be caught by a 10-second-TTL snapshot, and
+sub-second buckets would carry almost no observations. The first bucket
+therefore covers `(-Inf, 1]`, and SQL clamps observations to be non-negative.
 
-The regular grid naturally aligns with several familiar PostgreSQL and Pigsty
-risk landmarks:
+The two families use different top boundaries on purpose. Open transaction age
+extends to `100000 s` so that long batch jobs and bloat-forensics cases remain
+visible band by band. Idle-in-transaction age caps at `3000 s` because an idle
+transaction older than roughly `50 min` is uniformly critical: its exact age no
+longer changes the response, and it is counted in the `+Inf` bucket. The worst
+individual idle-in-transaction age remains visible through the existing
+`pg_activity_max_tx_duration` Gauge.
 
-- `50m` is PostgreSQL's default `vacuum_freeze_min_age`, below which a routine
-  vacuum normally avoids freezing otherwise-recent XIDs;
-- `100m` is the default `AGE_THRESHOLD` of Pigsty's bundled `pg-vacuum` tool,
-  which proactively selects aging databases and relations when the tool is
-  invoked or scheduled. It is an operator-tool policy, not a PostgreSQL GUC or
-  an automatic server-side trigger;
-- `200m` is PostgreSQL's default `autovacuum_freeze_max_age`;
-- `500m` is a logarithmic intermediate observation line;
-- `1b` is Pigsty's configured `autovacuum_freeze_max_age` for its standard
-  PostgreSQL profiles and is also a prominent critical dashboard boundary;
-- `2b` begins the final emergency band before the signed `2^31` XID-age limit.
+The `idle_seconds` population is a strict subset of the `seconds` population.
+Every idle-in-transaction backend also holds an open transaction, so for every
+database and boundary `idle_seconds_bucket <= seconds_bucket`. The
+`idle_seconds` filter uses `state LIKE 'idle in transaction%'`, which includes
+the `idle in transaction (aborted)` variant.
 
-Other important values remain policy context rather than bucket boundaries:
-`150m` is PostgreSQL's default `vacuum_freeze_table_age`; `1.6b` is PostgreSQL
-14+'s default `vacuum_failsafe_age`; approximately `1.7b` is Pigsty's 80%
-database-age critical line; and approximately `2.1b` is the PostgreSQL 14+
-warning neighborhood. Keeping these closely spaced values out of the bucket
-lattice prevents extremely narrow bands near the top of a logarithmic plot.
+These observations are **live ages**, sampled from transactions that still
+exist at collection time. They are not completed-transaction latency
+distributions. Long-lived transactions are more likely to appear in repeated
+snapshots, so statistical interpretation is length-biased. An instant quantile
+answers a question about the current live population only.
 
-These PostgreSQL parameters and Pigsty tool policies are **relation or database
-frozen-XID landmarks**. A backend crossing one of these Histogram boundaries
-does not itself trigger `pg-vacuum`, autovacuum, aggressive vacuum, failsafe
-mode, or shutdown. The mapping is intentional operational context: an old
-`backend_xid` or `backend_xmin` can hold back cleanup horizons, and a severe
-backend age can frustrate the vacuum work intended to keep relation ages safe.
-Operators MUST evaluate the Histogram together with actual database/relation
-ages, effective GUC values, scheduled maintenance tools, autovacuum activity,
-replication slots, and prepared transactions. Customized GUCs and tool options
-may move the true maintenance thresholds; the stable bucket layout is not a
-substitute for reading those settings.
+The right way to read these Histograms is as a **bank of count-over-threshold
+gauges**. For each boundary `T`, `_count` minus the cumulative bucket at `T` is
+the number of backends whose open (or idle) transaction currently exceeds `T`.
+They answer "how many backends are older than `T` right now" for a lattice of
+thresholds, rather than describing a latency SLO. Dashboards SHOULD treat `le`
+as numeric and use a logarithmic value axis for distribution plots; Section 11
+gives the count-over-threshold PromQL form.
 
 The existing `pg_activity` count and maximum-duration Gauges remain unchanged.
-The `pg_session` Histogram collector is additive and does not replace existing
-series in version 1.2.
+The `pg_xact_age` Histogram collector is additive and does not replace existing
+series.
 
 ## 11. PromQL contract
 
 ### 11.1 Instant quantile
 
-Current p95 active query age by database:
+Current p95 open transaction age by database:
 
 ```promql
 histogram_quantile(
   0.95,
   sum by (datname, le) (
-    pg_session_query_age_seconds_bucket
+    pg_xact_age_seconds_bucket
   )
 )
 ```
 
 ### 11.2 Population above a threshold
 
-Current active queries older than 100 seconds, an exact version 1.2 boundary:
+These Histograms are best read as a bank of count-over-threshold gauges.
+Current open transactions older than `3000 s` (about `50 min`), an exact
+boundary:
 
 ```promql
-sum by (datname) (
-  pg_session_query_age_seconds_bucket{le="+Inf"}
-)
+pg_xact_age_seconds_count
 -
-sum by (datname) (
-  pg_session_query_age_seconds_bucket{le="100"}
-)
+ignoring(le) pg_xact_age_seconds_bucket{le="3000"}
 ```
 
-`60 s` is a policy threshold but not a version 1.2 boundary. The Histogram
-cannot provide an exact `> 60 s` population without interpolation. Consumers
-that require that exact threshold SHOULD use a maximum-age or dedicated
-threshold Gauge rather than matching a nonexistent `le="60"` series.
+The same shape over the idle-in-transaction subset answers "how many backends
+are stuck idle in transaction beyond a threshold", here `300 s`:
 
-Consumers MUST use the boundary string actually exposed by version 1
-formatting for exact matchers, for example `1e+09` rather than `1000000000`.
+```promql
+pg_xact_age_idle_seconds_count
+-
+ignoring(le) pg_xact_age_idle_seconds_bucket{le="300"}
+```
+
+`60 s` is a common policy threshold but not a boundary in this grid. The
+Histogram cannot provide an exact `> 60 s` population without interpolation.
+Consumers that require that exact threshold SHOULD use a maximum-age or
+dedicated threshold Gauge rather than matching a nonexistent `le="60"` series.
+
+Consumers MUST use the boundary string actually exposed by the exporter's
+formatting for exact matchers. The current reference boundaries are integers
+that render as plain decimals such as `3000` and `100000`; fractional or very
+large boundaries in other configurations may render in scientific notation such
+as `1e+09`, and consumers MUST match the exact exposed string.
 
 ### 11.3 Snapshot mean
 
-Current mean live transaction age:
+Current mean live open transaction age:
 
 ```promql
-sum by (datname) (pg_session_xact_age_seconds_sum)
+sum by (datname) (pg_xact_age_seconds_sum)
 /
-sum by (datname) (pg_session_xact_age_seconds_count)
+sum by (datname) (pg_xact_age_seconds_count)
 ```
 
 Consumers SHOULD guard division by zero or absent populations.
@@ -671,9 +606,9 @@ Consumers SHOULD guard division by zero or absent populations.
 The following forms are semantically invalid for version 1 Histogram series:
 
 ```promql
-rate(pg_session_query_age_seconds_bucket[5m])
-increase(pg_session_query_age_seconds_count[1h])
-irate(pg_session_xid_age_bucket[5m])
+rate(pg_xact_age_seconds_bucket[5m])
+increase(pg_xact_age_seconds_count[1h])
+irate(pg_xact_age_idle_seconds_bucket[5m])
 ```
 
 Recording rules and dashboards MUST NOT treat version 1 bucket, count, or sum
@@ -716,8 +651,8 @@ The expected implementation surfaces are:
   during exporter creation and reload;
 - `config/0000-doc.yml` and `README.md`: document the implemented syntax and
   snapshot PromQL contract;
-- `config/0415-pg_session.yml`: provide the four reference session snapshot
-  Histograms;
+- `config/0450-pg_xact_age.yml`: provide the two reference open-transaction-age
+  snapshot Histograms;
 - focused unit and lifecycle tests.
 
 Version 1 SHOULD NOT require changes to the `Server`, `Exporter`, registry,
@@ -787,13 +722,16 @@ Tests MUST verify:
 
 The implementation is complete only when:
 
-- the four `pg_session` Histograms gather from a supported PostgreSQL instance;
-- the `pg_session` collector runs once with `tags: [cluster]` under
+- the two `pg_xact_age` Histograms gather from a supported PostgreSQL instance;
+- the `pg_xact_age` collector runs once with `tags: [cluster]` under
   auto-discovery
   and emits no duplicate series;
-- the three second-valued Histograms expose the identical required boundaries;
-- `xid_age` uses the greater available age from `backend_xid` and
-  `backend_xmin` and is absent when both are NULL;
+- `seconds` and `idle_seconds` each expose their configured boundaries, and the
+  idle-in-transaction population is a strict subset of the open-transaction
+  population for every database and boundary;
+- `seconds` observes every client backend that holds an `xact_start`,
+  `idle_seconds` observes only the `idle in transaction%` subset, and each is
+  absent for a database with no such backend;
 - direct `histogram_quantile()` returns plausible instant values;
 - threshold subtraction equals the independently queried SQL count;
 - existing Gauge and Counter metric names and values remain unchanged;
@@ -815,7 +753,7 @@ Version 1 explicitly does not provide:
 - dynamic or automatically inferred bucket boundaries;
 - exporter-computed quantiles;
 - high-cardinality per-PID, per-query, or per-relation Histogram labels;
-- PostgreSQL 9.x compatibility for the `pg_session` reference query.
+- PostgreSQL 9.x compatibility for the `pg_xact_age` reference query.
 
 ## 16. Future evolution
 
@@ -1084,11 +1022,16 @@ exact threshold population justifies the cardinality and visual cost.
 
 ### C.3 Normative grids and cardinality
 
-The three second-valued Histograms share the 18-boundary `1, 3, 10` grid from
-Section 10.2. Each populated label tuple emits 21 series. The XID Histogram
-uses the 11-boundary `1, 2, 5` grid from Section 10.3 and emits 14 series per
-populated tuple. For one hypothetical label tuple populated in all four
-Histograms, the component-series count falls from version 1.1's `90` to `77`.
+The three second-valued Histograms share the 18-boundary `1, 3, 10` grid
+`[0.01, 0.03, 0.1, 0.3, 1, 3, 10, 30, 100, 300, 1000, 3000, 10000, 30000,
+100000, 300000, 1000000, 3000000]`. Each populated label tuple emits 21
+series. The XID Histogram uses the 11-boundary `1, 2, 5` grid `[1000000,
+2000000, 5000000, 10000000, 20000000, 50000000, 100000000, 200000000,
+500000000, 1000000000, 2000000000]` and emits 14 series per populated tuple.
+For one hypothetical label tuple populated in all four Histograms, the
+component-series count falls from version 1.1's `90` to `77`. (These are the
+version 1.2 grids, recorded inline; the current body documents the narrower
+version 1.3 grids.)
 
 The time grid favors a compact, nearly equal Log10 visual spacing across more
 than eight decades. The XID grid uses slightly finer spacing because the
@@ -1139,3 +1082,75 @@ snapshot behavior rather than cross-scrape accumulation.
 The test did not attempt to manufacture million- or billion-transaction XID
 ages. It validates the XID family structure and first-band behavior, not every
 upper risk band.
+
+## Appendix D. Version 1.3 reference-collector redesign
+
+### D.1 Authority and scope
+
+Version 1.3 is a user-directed redesign of the normative reference collector,
+dated 2026-07-17. It preserves every engine contract reviewed and accepted in
+version 1.0: snapshot-per-real-execution semantics, Gauge bucket/count/sum
+exposition, `le` formatting, atomic result publication, NULL handling, cache and
+reload behavior, and the `(B + 3) * L` cardinality model. It changes only the
+reference query, its labels, its Histogram set, and its bucket policy.
+
+Appendices A, B, and C remain the historical record of versions 1.0, 1.1, and
+1.2. Version 1.3 was applied in place: the body of this document (notably
+Sections 3, 5, 8, 10, 11, 13, and 14) already describes the version 1.3 design
+and remains the sole normative authority. This appendix records what changed
+relative to version 1.2 and why. Unlike Appendices A–C it does not record a
+separate formal read-only review session.
+
+### D.2 Accepted changes
+
+Version 1.3 makes the following authoritative changes:
+
+1. The reference collector `pg_session` (`config/0415-pg_session.yml`) is
+   replaced by `pg_xact_age` (`config/0450-pg_xact_age.yml`). The execution
+   controls are unchanged: `ttl: 10`, `min_version: 100000`, `tags: [cluster]`.
+2. The four `pg_session` Histograms (`query_age_seconds`, `xact_age_seconds`,
+   `age_seconds`, and `xid_age`) are replaced by two Histograms over open
+   transaction age: `seconds` over every client backend that holds an
+   `xact_start`, and `idle_seconds` over the idle-in-transaction subset. The
+   `_count` of `seconds` doubles as the per-database open-transaction count.
+3. The `state` label is removed. State semantics move into the two column `CASE`
+   filters, cutting cardinality while preserving the idle-in-transaction view.
+4. Buckets start at `1 s`. The `seconds` family uses the 11-boundary `1, 3, 10`
+   grid `[1 … 100000]` (about `27.8 h`); `idle_seconds` uses the 8-boundary grid
+   `[1 … 3000]` (about `50 min`).
+
+### D.3 Rationale
+
+The redesign narrows the reference surface to the one distribution that snapshot
+sampling can measure honestly, and reframes what the Histogram is for.
+
+- **Open transaction age is the load-bearing signal.** A long-open transaction
+  holds back vacuum horizons, pins bloat, and blocks DDL, and its age is a live
+  quantity that a snapshot samples correctly. `idle_seconds` isolates the
+  idle-in-transaction subset (the most common pathological case) as a strict
+  subset of the same population. `state LIKE 'idle in transaction%'` also
+  captures the `(aborted)` variant.
+- **Active query age was dropped.** Under autocommit it nearly duplicates
+  open-transaction age. Stuck-query detection is a max-type signal already
+  served by `pg_activity_max_duration`, and true latency distributions belong to
+  `pg_stat_statements`, not to a length-biased snapshot.
+- **Session/connection age was dropped.** Snapshot sampling systematically
+  misses short-lived connections (length-biased sampling), so it cannot measure
+  churn honestly. PostgreSQL 14+ `pg_stat_database` `sessions`/`session_time`
+  counters (the `pg_db` collector) measure churn correctly, and
+  `pg_activity_max_conn_duration` covers the oldest connection.
+- **Backend XID-horizon age was dropped.** Wraparound risk is a max-type signal
+  already covered by `pg_xact` and `pg_activity`; a distribution over backend
+  XID ages adds no actionable information beyond the current maximum.
+- **Sub-second buckets were dropped.** Snapshot Histograms are length-biased by
+  the inspection paradox: a 10-second-TTL snapshot almost never catches a
+  sub-second object, so those buckets were noise. Buckets start at `1 s`.
+- **The two grids differ on purpose.** Open transaction age extends to
+  `100000 s` for batch and bloat forensics. Idle-in-transaction age caps at
+  `3000 s` because anything older is uniformly critical, its exact value no
+  longer changes the response, and it lands in `+Inf`; the worst individual age
+  remains visible through `pg_activity_max_tx_duration`.
+- **The reframing.** These snapshot Histograms are not latency distributions.
+  They answer "how many backends currently exceed age `T`" for a lattice of
+  thresholds: a bank of count-over-threshold gauges. Section 11.2 gives the
+  canonical count-over-threshold alert form built on this property.
