@@ -3,6 +3,7 @@ package exporter
 import (
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"sync"
@@ -919,7 +920,7 @@ func VersionFunc(w http.ResponseWriter, r *http.Request) {
 // TitleFunc responding a description message
 func TitleFunc(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=UTF-8")
-	_, _ = w.Write([]byte(`<html><head><title>PG Exporter</title></head><body><h1>PG Exporter</h1><p><a href='` + *metricPath + `'>Metrics</a></p></body></html>`))
+	_, _ = w.Write([]byte(`<html><head><title>PG Exporter</title></head><body><h1>PG Exporter</h1><p><a href='` + html.EscapeString(*metricPath) + `'>Metrics</a></p></body></html>`))
 }
 
 // ReloadFunc handles reload request

@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	pathpkg "path"
 	"sort"
 	"strings"
 	"time"
@@ -31,6 +32,11 @@ func validateTelemetryPath(path string) (err error) {
 	}
 	if strings.ContainsAny(path, "{}") {
 		return fmt.Errorf("web.telemetry-path %q must be a literal URL path without ServeMux wildcards", path)
+	}
+	// ServeMux path-cleans incoming requests, so a non-canonical pattern like
+	// "//metrics" or "/a/../metrics" registers fine but can never be matched
+	if cleaned := pathpkg.Clean(path); path != cleaned && path != cleaned+"/" {
+		return fmt.Errorf("web.telemetry-path %q must be a canonical URL path (did you mean %q?)", path, cleaned)
 	}
 
 	defer func() {
