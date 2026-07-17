@@ -196,7 +196,7 @@ func (q *Query) MetricList() (res []*MetricDesc) {
 // Histogram metric. Histogram components are derived later by the collector.
 func (q *Query) HasHistogram() bool {
 	for _, metricName := range q.MetricNames {
-		if column := q.Columns[metricName]; column != nil && column.Usage == HISTOGRAM {
+		if column := q.Columns[metricName]; column != nil && column.IsHistogram() {
 			return true
 		}
 	}

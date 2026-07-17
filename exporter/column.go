@@ -64,6 +64,13 @@ func (c *Column) parseNumbers() error {
 	return nil
 }
 
+// IsHistogram reports whether this column is a HISTOGRAM value column.
+// Usage is normalized to uppercase during config parsing, so exact
+// comparison is the single predicate every path must share.
+func (c *Column) IsHistogram() bool {
+	return c.Usage == HISTOGRAM
+}
+
 // PrometheusValueType returns column's corresponding prometheus value type
 func (c *Column) PrometheusValueType() prometheus.ValueType {
 	switch strings.ToUpper(c.Usage) {

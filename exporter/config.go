@@ -97,7 +97,7 @@ func ParseConfig(content []byte) (queries map[string]*Query, err error) {
 				case LABEL:
 					labelColumns = append(labelColumns, column.Name)
 				case GAUGE, COUNTER, HISTOGRAM:
-					if column.Usage == HISTOGRAM {
+					if column.IsHistogram() {
 						if err := validateHistogramBuckets(column.Bucket); err != nil {
 							return nil, fmt.Errorf("query %q column %q: %w", branch, colName, err)
 						}
@@ -159,7 +159,7 @@ func ParseConfig(content []byte) (queries map[string]*Query, err error) {
 			}
 
 			familyNames := []string{metricName}
-			if c.Usage == HISTOGRAM {
+			if c.IsHistogram() {
 				familyNames = append(familyNames,
 					metricName+"_bucket",
 					metricName+"_count",

@@ -302,7 +302,7 @@ func (q *Collector) execute() {
 	// indistinguishable from a valid empty population.
 	for _, metricName := range q.MetricNames {
 		column := q.Columns[metricName]
-		if column != nil && strings.EqualFold(column.Usage, HISTOGRAM) {
+		if column != nil && column.IsHistogram() {
 			if _, found := columnIndexes[metricName]; !found {
 				q.err = fmt.Errorf("query [%s] missing histogram column %s.%s in result", q.Name, q.Name, metricName)
 				return
@@ -336,7 +336,7 @@ func (q *Collector) execute() {
 		for _, metricName := range q.MetricNames {
 			if dataIndex, found := columnIndexes[metricName]; found { // the metric column is found in result
 				column := q.Columns[metricName]
-				if strings.EqualFold(column.Usage, HISTOGRAM) {
+				if column.IsHistogram() {
 					value, present, castErr := castHistogramFloat64(colData[dataIndex], column)
 					if castErr != nil {
 						q.err = fmt.Errorf("query [%s] histogram column %s.%s: %w", q.Name, q.Name, metricName, castErr)
@@ -397,7 +397,7 @@ func (q *Collector) execute() {
 	// order. Each group is bucket(s), +Inf, count, then sum.
 	for _, metricName := range q.MetricNames {
 		column := q.Columns[metricName]
-		if column == nil || !strings.EqualFold(column.Usage, HISTOGRAM) {
+		if column == nil || !column.IsHistogram() {
 			continue
 		}
 		groups := histograms[metricName]
@@ -493,7 +493,7 @@ func (q *Collector) makeDescMap() {
 		if metricColumn.Rename != "" {
 			prometheusName = fmt.Sprintf("%s_%s", q.Name, metricColumn.Rename)
 		}
-		if strings.EqualFold(metricColumn.Usage, HISTOGRAM) {
+		if metricColumn.IsHistogram() {
 			bucketLabelNames := append(append([]string(nil), labelNames...), "le")
 			histogramDescriptors[metricName] = histogramMetricDescriptors{
 				bucket: prometheus.NewDesc(
