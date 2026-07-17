@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -25,10 +29,10 @@ jobs:
       - name: Verify module files
         run: go mod tidy -diff
 
-      - name: Run tests
-        run: go test -count=1 ./...
+      - name: Verify generated configs
+        run: make conf conf9 && git diff --exit-code pg_exporter.yml legacy/pg_exporter.yml
 
-      - name: Run race tests
+      - name: Run tests
         run: go test -race -count=1 ./...
 
       - name: Run go vet
