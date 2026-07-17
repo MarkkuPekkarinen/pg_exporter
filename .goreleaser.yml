@@ -39,7 +39,9 @@ builds:
     ldflags:
       - -s -w
       - -extldflags "-static"
-      - -X 'pg_exporter/exporter.Version={{.Version}}'
+      # goreleaser strips the v prefix from {{.Version}}; add it back so release
+      # binaries report the same v-prefixed version as make build / go build
+      - -X 'pg_exporter/exporter.Version=v{{.Version}}'
       - -X 'pg_exporter/exporter.Branch={{.Branch}}'
       - -X 'pg_exporter/exporter.Revision={{.ShortCommit}}'
       - -X 'pg_exporter/exporter.BuildDate={{.Date}}'
@@ -75,9 +77,9 @@ nfpms:
     maintainer: Ruohang Feng <rh@vonng.com>
     description: |
       Prometheus exporter for PostgreSQL / Pgbouncer server metrics.
-      Supported version: Postgres9.4 - 17+ & Pgbouncer 1.8 - 1.24+
+      Supported version: Postgres9.x - 19+ & Pgbouncer 1.8 - 1.25+
       Part of Project Pigsty -- Battery Included PostgreSQL Distribution
-      with ultimate observability support: https://pigsty.io/docs
+      with ultimate observability support: https://pigsty.io/docs/pg_exporter
     license: Apache-2.0
     formats:
       - rpm
@@ -126,9 +128,9 @@ nfpms:
     maintainer: Ruohang Feng <rh@vonng.com>
     description: |
       Prometheus exporter for PostgreSQL / Pgbouncer server metrics.
-      Supported version: Postgres9.4 - 17+ & Pgbouncer 1.8 - 1.24+
+      Supported version: Postgres9.x - 19+ & Pgbouncer 1.8 - 1.25+
       Part of Project Pigsty -- Battery Included PostgreSQL Distribution
-      with ultimate observability support: https://pigsty.io/docs
+      with ultimate observability support: https://pigsty.io/docs/pg_exporter
     license: Apache-2.0
     formats:
       - deb
