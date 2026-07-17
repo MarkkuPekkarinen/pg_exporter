@@ -115,6 +115,7 @@ The existing options have these meanings:
 - `name` and `rename` determine the logical base metric name in the same way as
   Gauge and Counter columns.
 - `scale` is applied to the SQL value before bucket assignment and summation.
+  As with scalar columns, timestamp and boolean values are exempt from `scale`.
 - `default`, when explicitly configured, converts SQL NULL to one observation
   with the configured default value. The default is multiplied by `scale`,
   matching the existing scalar metric behavior. Without `default`, NULL is

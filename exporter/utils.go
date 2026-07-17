@@ -150,17 +150,21 @@ func castHistogramFloat64(t interface{}, c *Column) (value float64, present bool
 		t = c.defaultValue
 	}
 
+	// scale semantics must mirror castFloat64: epoch timestamps and booleans
+	// are never scaled, so a column yields the same value under any usage
 	switch v := t.(type) {
 	case int64:
-		value = float64(v)
+		value = float64(v) * scale
 	case float64:
-		value = v
+		value = v * scale
 	case time.Time:
 		value = float64(v.Unix())
 	case []byte:
 		value, err = strconv.ParseFloat(string(v), 64)
+		value *= scale
 	case string:
 		value, err = strconv.ParseFloat(v, 64)
+		value *= scale
 	case bool:
 		if v {
 			value = 1
@@ -171,8 +175,6 @@ func castHistogramFloat64(t interface{}, c *Column) (value float64, present bool
 	if err != nil {
 		return 0, false, err
 	}
-
-	value *= scale
 	if math.IsNaN(value) || math.IsInf(value, 0) {
 		return 0, false, fmt.Errorf("non-finite observation %v", value)
 	}
