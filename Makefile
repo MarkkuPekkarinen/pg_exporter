@@ -153,6 +153,8 @@ release-new: goreleaser-release
 docker: docker-build
 docker-build:
 	docker build -f Dockerfile \
+		--build-arg GOPROXY=$${GOPROXY:-https://proxy.golang.org,direct} \
+		--build-arg GOSUMDB=$${GOSUMDB:-sum.golang.org} \
 		-t $(DOCKER_REPO):$(VERSION)-dev \
 		-t $(DOCKER_REPO):dev .
 
